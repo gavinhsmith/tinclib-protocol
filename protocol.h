@@ -30,7 +30,7 @@
 /* Pre-1.0: any MINOR bump may break the wire format, so while MAJOR is 0
  * HELLO requires an exact MAJOR.MINOR match (else ERR_VERSION). */
 #define TINC_PROTO_MAJOR 0
-#define TINC_PROTO_MINOR 2
+#define TINC_PROTO_MINOR 3
 
 /* ---- Framing ---------------------------------------------------------- */
 
@@ -40,7 +40,7 @@
 #define TINC_OVERHEAD   (TINC_HDR_LEN + TINC_CRC_LEN)
 
 #define TINC_FLAG_RESP  0x01u
-#define TINC_FLAG_EVENT 0x02u   /* no events defined in 0.2 */
+#define TINC_FLAG_EVENT 0x02u   /* no events defined in 0.3 */
 #define TINC_FLAG_ERR   0x04u
 
 /* Each side advertises its RECEIVE limit in HELLO. Before HELLO completes
@@ -66,11 +66,11 @@ enum {
     TINC_T_STATUS      = 0x02,
     TINC_T_REQ_BEGIN   = 0x10,
     TINC_T_REQ_STATUS  = 0x11,
-    /* 0x13 HDR_GET    reserved, not in 0.2 */
+    /* 0x13 HDR_GET    reserved, not in 0.3 */
     TINC_T_REQ_ABORT   = 0x14,
     /* 0x20 BODY_WRITE reserved (POST, planned) */
     TINC_T_BODY_READ   = 0x21,
-    TINC_T_WIFI_LIST   = 0x40,
+    TINC_T_WIFI_GET    = 0x40,
     TINC_T_WIFI_SET    = 0x41,
     TINC_T_WIFI_FORGET = 0x42
     /* 0x80 BOOT event reserved */
@@ -89,7 +89,7 @@ enum {
     TINC_ERR_BAD_STATE          = 0x06,
     TINC_ERR_BAD_OFFSET         = 0x07,
     TINC_ERR_BAD_ARG            = 0x08,
-    TINC_ERR_UNSUPPORTED_SCHEME = 0x09, /* https:// in 0.2 */
+    TINC_ERR_UNSUPPORTED_SCHEME = 0x09, /* https:// in 0.3 */
     TINC_ERR_LOCKED             = 0x0A, /* Wi-Fi profiles locked on the ESP */
     /* request (REQ_STATUS.err, or BODY_READ error reply in ERROR state) */
     TINC_ERR_WIFI_DOWN          = 0x20,
@@ -106,7 +106,7 @@ enum {
 enum {
     TINC_RS_IDLE         = 0,
     TINC_RS_CONNECTING   = 1,
-    TINC_RS_TLS          = 2,   /* defined now, never sent in 0.2 */
+    TINC_RS_TLS          = 2,   /* defined now, never sent in 0.3 */
     TINC_RS_SENDING      = 3,
     TINC_RS_WAIT_HEADERS = 4,
     TINC_RS_BODY         = 5,
@@ -123,12 +123,14 @@ enum {
     TINC_WIFI_FAILED     = 3
 };
 
-#define TINC_WIFI_SLOTS     3u
+/* Slot count is defined by the firmware and reported in HELLO (wifi_slots).
+ * Slots are numbered 0 .. wifi_slots-1. */
+#define TINC_WIFI_SLOTS_MAX 254u /* 0xFF is TINC_SLOT_NONE */
 #define TINC_SSID_MAX       32u
 #define TINC_PASS_MAX       64u
 #define TINC_SLOT_NONE      0xFFu
 
-/* Per-slot Wi-Fi flags (WIFI_SET, WIFI_LIST) */
+/* Per-slot Wi-Fi flags (WIFI_SET, WIFI_GET) */
 #define TINC_WF_HIDDEN      0x01u /* SSID not broadcast: ESP connects without seeing it in a scan */
 
 /* ---- Payload layouts (byte offsets) ------------------------------------
@@ -137,15 +139,16 @@ enum {
  */
 
 /* HELLO req & resp (same leading layout)
- *   major u8, minor u8, caps u16 (0 in 0.2), max_payload u16
- *   resp only: free_heap u32 */
+ *   major u8, minor u8, caps u16 (0 in 0.3), max_payload u16
+ *   resp only: free_heap u32, wifi_slots u8 (1 .. TINC_WIFI_SLOTS_MAX) */
 #define TINC_HELLO_MAJOR        0
 #define TINC_HELLO_MINOR        1
 #define TINC_HELLO_CAPS         2
 #define TINC_HELLO_MAX_PAYLOAD  4
 #define TINC_HELLO_REQ_LEN      6
 #define TINC_HELLO_FREE_HEAP    6
-#define TINC_HELLO_RESP_LEN     10
+#define TINC_HELLO_WIFI_SLOTS   10
+#define TINC_HELLO_RESP_LEN     11
 
 /* STATUS req: empty
  * resp: wifi_state u8, slot u8, rssi i8, ip[4], free_heap u32, req_state u8,
@@ -161,16 +164,16 @@ enum {
 
 /* Wi-Fi lock: set on the ESP only (firmware build flag or physical
  * switch), never over the wire. While set, WIFI_SET and WIFI_FORGET return
- * ERR_LOCKED; WIFI_LIST still works. */
+ * ERR_LOCKED; WIFI_GET still works. */
 #define TINC_STATUSF_WIFI_LOCKED 0x01u
 
 /* REQ_BEGIN req: method u8, flags u8, timeout_s u8, content_len u32,
  *   url_len u16, hdr_len u16, url[url_len], hdrs[hdr_len]
- *   - method: GET only in 0.2 (else ERR_BAD_ARG)
- *   - content_len: must be 0 in 0.2 (field reserved for POST)
+ *   - method: GET only in 0.3 (else ERR_BAD_ARG)
+ *   - content_len: must be 0 in 0.3 (field reserved for POST)
  *   - timeout_s: per phase (connect / wait-headers / body gap), 0 = default
  *   - hdrs: "Name: value\r\n" pairs; ESP never logs or stores them
- *   - http:// only in 0.2 (https -> ERR_UNSUPPORTED_SCHEME)
+ *   - http:// only in 0.3 (https -> ERR_UNSUPPORTED_SCHEME)
  * resp: empty. Sync errors: BUSY, BAD_ARG, BAD_LEN, UNSUPPORTED_SCHEME,
  *   WIFI_DOWN. On top of DONE/ERROR the old request is released. */
 #define TINC_BEGIN_METHOD       0
@@ -220,24 +223,28 @@ enum {
 
 #define TINC_READF_EOF          0x01u
 
-/* WIFI_LIST req: empty
- * resp: TINC_WIFI_SLOTS x (ssid_len u8, ssid[ssid_len]); ssid_len 0 = empty,
- *   then TINC_WIFI_SLOTS x wflags u8 (TINC_WF_*), in slot order.
+/* WIFI_GET req: slot u8
+ * resp: ssid_len u8, ssid[ssid_len], wflags u8 (TINC_WF_*); ssid_len 0 = empty
+ *   One slot per frame, so it always fits in TINC_PAYLOAD_MIN whatever the
+ *   slot count. Slot >= wifi_slots -> ERR_BAD_ARG.
  * Passwords are write-only: no command ever returns one. */
+#define TINC_WGET_SLOT          0   /* req */
+#define TINC_WGET_SSID_LEN      0   /* resp */
+#define TINC_WGET_SSID          1   /* resp; wflags follows ssid */
 
 /* WIFI_SET req: slot u8, ssid_len u8, ssid[], pass_len u8, pass[], wflags u8
  *   - wflags: TINC_WF_* (HIDDEN)
  * resp: empty. Saves the slot and triggers reconnect. ESP auto-connects to
- * the first reachable slot, 0 -> 2; a hidden slot is tried directly since it
- * never shows up in a scan. Error: ERR_LOCKED. */
+ * the first reachable slot, 0 -> wifi_slots-1; a hidden slot is tried directly since it
+ * never shows up in a scan. Errors: ERR_LOCKED, ERR_BAD_ARG (slot out of range). */
 #define TINC_WSET_SLOT          0
 #define TINC_WSET_SSID_LEN      1
 #define TINC_WSET_SSID          2
 
-/* WIFI_FORGET req: slot u8. resp: empty. Error: ERR_LOCKED. */
+/* WIFI_FORGET req: slot u8. resp: empty. Errors: ERR_LOCKED, ERR_BAD_ARG. */
 #define TINC_WFORGET_SLOT       0
 
-/* NOTE: admin commands (0x40+) have no wire-level access control in 0.2.
+/* NOTE: admin commands (0x40+) have no wire-level access control in 0.3.
  * Open question — see AGENTS.md. */
 
 /* ---- Little-endian helpers -------------------------------------------- */

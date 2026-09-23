@@ -3,6 +3,19 @@
 Every wire-visible change bumps `TINC_PROTO_MAJOR` or `TINC_PROTO_MINOR` in
 `protocol.h`, and is tagged `vMAJOR.MINOR.0`.
 
+## v0.3.0
+
+The number of Wi-Fi slots is now defined by the firmware. Not compatible
+with 0.2.
+
+- The `HELLO` reply appends `wifi_slots u8` (1..254). Slots are numbered
+  `0 .. wifi_slots-1`, and a slot outside that range gets `ERR_BAD_ARG`.
+- `WIFI_LIST` (0x40) is replaced by `WIFI_GET` (0x40). The request is
+  `slot u8`, and the reply is `ssid_len u8, ssid[], wflags u8` for that one
+  slot. A full list could outgrow a 64-byte `max_payload`; one slot per frame
+  always fits.
+- `TINC_WIFI_SLOTS` is replaced by `TINC_WIFI_SLOTS_MAX` (254).
+
 ## v0.2.0
 
 Wi-Fi additions. Not compatible with 0.1: HELLO rejects a 0.1 peer with

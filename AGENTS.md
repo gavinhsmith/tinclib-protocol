@@ -19,10 +19,11 @@ platform code to compile, it belongs in the consuming repo, not here.
 
 ## Current status
 
-- **Version 0.2.0 is a draft.** `v0.1.0` is tagged, and `v0.2.0` gets tagged
+- **Version 0.3.0 is a draft.** `v0.1.0` and `v0.2.0` are tagged, and `v0.3.0` gets tagged
   when the user asks. The spec will keep changing on the way to 1.0.
-- **0.2 scope:** plain-HTTP GET, plus the minimum Wi-Fi setup
-  (`WIFI_LIST` / `WIFI_SET` / `WIFI_FORGET`), hidden networks, and an
+- **0.3 scope:** plain-HTTP GET, plus the minimum Wi-Fi setup
+  (`WIFI_GET` / `WIFI_SET` / `WIFI_FORGET`) with a firmware-defined number
+  of slots, hidden networks, and an
   ESP-side lock on the Wi-Fi profiles.
 - **Deferred:**
   - HTTPS / TLS / the `INSECURE` flag / CA bundle update
@@ -202,25 +203,25 @@ These rules exist for reasons discussed at length during design; do not
    with a request active, it frees that request's resources. This is a
    safety net for a CE that crashed or was unplugged mid-request.
 
-## Message types (0.2 — see protocol.h for layouts)
+## Message types (0.3 — see protocol.h for layouts)
 
 | Type | Name | Notes |
 |---|---|---|
-| `0x01` | `HELLO` | major, minor, caps (0), max_payload; the reply adds free_heap. Always executed, never replayed |
+| `0x01` | `HELLO` | major, minor, caps (0), max_payload; the reply adds free_heap and wifi_slots (the firmware's slot count, 1..254). Always executed, never replayed |
 | `0x02` | `STATUS` | wifi_state, slot, rssi, ip, free_heap, req_state, flags (`0x01 WIFI_LOCKED`). time_valid and insecure_enabled get appended when HTTPS lands |
-| `0x10` | `REQ_BEGIN` | method, flags, timeout_s, content_len, url_len, hdr_len, url, headers. **0.2: GET and `http://` only.** content_len must be 0 (reserved for POST). Flag `0x01 TRANSCODE` |
+| `0x10` | `REQ_BEGIN` | method, flags, timeout_s, content_len, url_len, hdr_len, url, headers. **0.3: GET and `http://` only.** content_len must be 0 (reserved for POST). Flag `0x01 TRANSCODE` |
 | `0x11` | `REQ_STATUS` | state, err, http_status, content_len, ctype — folds in what would've been REQ_INFO |
 | `0x13` | `HDR_GET` | **reserved, not implemented** — needed for reading `Location` on 3xx |
 | `0x14` | `REQ_ABORT` | works in any state, including idle; frees resources immediately |
 | `0x20` | `BODY_WRITE` | **reserved, planned (POST)**. Offset-based, credit/window flow control from the ESP |
 | `0x21` | `BODY_READ` | offset, max_len, wait_ms → offset, flags (`0x01 EOF`), data |
-| `0x40` | `WIFI_LIST` | SSIDs of the 3 slots, then one wflags byte per slot. Never passwords. Works while locked |
+| `0x40` | `WIFI_GET` | slot → ssid, wflags for that one slot. One slot per frame, so it always fits in the 64-byte minimum payload. Never passwords. Works while locked. `ERR_BAD_ARG` if slot ≥ wifi_slots |
 | `0x41` | `WIFI_SET` | slot, ssid, password (write-only), wflags (`0x01 HIDDEN`). Saves the slot and triggers a reconnect. `ERR_LOCKED` while locked |
 | `0x42` | `WIFI_FORGET` | slot. `ERR_LOCKED` while locked |
 | `0x43+` | admin | scan, insecure-mode toggle and CA bundle update will come later. **Admin commands are not access-controlled on the wire**; see Open Questions |
-| `0x80` | `BOOT` event | **reserved, not in 0.2.** Optional hint, not authoritative; the CE must still poll |
+| `0x80` | `BOOT` event | **reserved, not in 0.3.** Optional hint, not authoritative; the CE must still poll |
 
-The ESP auto-connects to the first reachable Wi-Fi slot, trying 0 → 2. A
+The ESP auto-connects to the first reachable Wi-Fi slot, trying 0 → wifi_slots−1. A
 hidden slot never appears in a scan, so the ESP tries it directly.
 
 **Wi-Fi lock.** It is set on the ESP only, by a firmware build flag or a
@@ -228,13 +229,13 @@ physical switch. Nothing on the wire can set or clear it: that would be a
 software-only gate, which Open Questions rules out without discussion.
 - `STATUS` reports it.
 - `WIFI_SET` / `WIFI_FORGET` return `ERR_LOCKED`.
-- `WIFI_LIST` still works.
+- `WIFI_GET` still works.
 
 **Request state machine.** Values are fixed and all defined now, so a
 newer ESP never sends a state an older CE doesn't know:
 `IDLE 0`, `CONNECTING 1`, `TLS 2`, `SENDING 3`, `WAIT_HEADERS 4`, `BODY 5`,
 `DONE 6`, `ERROR 7`.
-- `TLS` is never sent in 0.2.
+- `TLS` is never sent in 0.3.
 - `DONE` means EOF has been delivered to the CE.
 - `ERROR` can happen at any point, and carries an error code.
 - `REQ_BEGIN` on top of an active request returns `ERR_BUSY`. On top of a
@@ -246,7 +247,7 @@ newer ESP never sends a state an older CE doesn't know:
 
 ## Design constraints baked into this protocol
 
-- **Scope is HTTP/HTTPS in v1; 0.2 is plain-HTTP GET only.**
+- **Scope is HTTP/HTTPS in v1; 0.3 is plain-HTTP GET only.**
   - `https://` returns `ERR_UNSUPPORTED_SCHEME`. So does a GET redirected
     to https, which is common: many sites redirect http→https.
   - No raw TCP sockets are exposed to apps.
@@ -258,16 +259,18 @@ newer ESP never sends a state an older CE doesn't know:
   would require buffering the whole request body in ESP RAM), chunked
   transfer decoding, gzip (ESP requests uncompressed content). The CE only
   ever sees plain decoded bytes.
-- **Only 3 Wi-Fi profiles, no API-key/credential storage on the ESP.**
-  Passwords are write-only on the wire — no command reads one back, and
-  listing slots returns SSIDs only. API keys/auth headers are the app's
+- **The firmware decides how many Wi-Fi profiles there are**, and reports
+  the count in `HELLO`. Never assume a fixed number on the CE side. There is
+  no API-key/credential storage on the ESP. Passwords are write-only on the
+  wire — no command reads one back, and `WIFI_GET` returns the SSID and flags
+  only. API keys/auth headers are the app's
   responsibility, sent per-request in the headers field; the firmware must
   never persist or log request headers.
 - **Insecure TLS mode is double-gated** (from when HTTPS lands). A request's
   `INSECURE` flag only works if TINCLIBC's global "allow insecure" setting
   is also on (`ERR_INSECURE_DISABLED` otherwise). No per-request-only bypass
   exists.
-- **ASCII transcoding is in 0.2**, controlled by the `TRANSCODE` request
+- **ASCII transcoding is in 0.3**, controlled by the `TRANSCODE` request
   flag.
   - It converts curly quotes, em-dashes, accented chars and the like to
     calculator-safe ASCII.
@@ -289,10 +292,10 @@ newer ESP never sends a state an older CE doesn't know:
   ops) was discussed but not decided. Do not implement an alternative
   software-only gate (like a PIN over serial) without raising this
   explicitly — it wasn't the direction favored in design discussion. The
-  0.2 Wi-Fi lock is consistent with this: it is set physically or at build
+  Wi-Fi lock (added in 0.2) is consistent with this: it is set physically or at build
   time and only reported on the wire. It covers Wi-Fi profiles only, not
   admin commands in general.
-- **Baud negotiation is deferred.** 0.2 runs at a fixed 115200, and `HELLO`
+- **Baud negotiation is deferred.** 0.3 runs at a fixed 115200, and `HELLO`
   has no baud field yet; it will be appended. Don't wire up a runtime
   baud-switch without confirming the CE-side driver situation (see tinclib's
   AGENTS.md — the `srldrvce` chip-support situation directly affects this).
