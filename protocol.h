@@ -30,7 +30,7 @@
 /* Pre-1.0: any MINOR bump may break the wire format, so while MAJOR is 0
  * HELLO requires an exact MAJOR.MINOR match (else ERR_VERSION). */
 #define TINC_PROTO_MAJOR 0
-#define TINC_PROTO_MINOR 1
+#define TINC_PROTO_MINOR 2
 
 /* ---- Framing ---------------------------------------------------------- */
 
@@ -40,7 +40,7 @@
 #define TINC_OVERHEAD   (TINC_HDR_LEN + TINC_CRC_LEN)
 
 #define TINC_FLAG_RESP  0x01u
-#define TINC_FLAG_EVENT 0x02u   /* no events defined in 0.1 */
+#define TINC_FLAG_EVENT 0x02u   /* no events defined in 0.2 */
 #define TINC_FLAG_ERR   0x04u
 
 /* Each side advertises its RECEIVE limit in HELLO. Before HELLO completes
@@ -66,7 +66,7 @@ enum {
     TINC_T_STATUS      = 0x02,
     TINC_T_REQ_BEGIN   = 0x10,
     TINC_T_REQ_STATUS  = 0x11,
-    /* 0x13 HDR_GET    reserved, not in 0.1 */
+    /* 0x13 HDR_GET    reserved, not in 0.2 */
     TINC_T_REQ_ABORT   = 0x14,
     /* 0x20 BODY_WRITE reserved (POST, planned) */
     TINC_T_BODY_READ   = 0x21,
@@ -89,7 +89,8 @@ enum {
     TINC_ERR_BAD_STATE          = 0x06,
     TINC_ERR_BAD_OFFSET         = 0x07,
     TINC_ERR_BAD_ARG            = 0x08,
-    TINC_ERR_UNSUPPORTED_SCHEME = 0x09, /* https:// in 0.1 */
+    TINC_ERR_UNSUPPORTED_SCHEME = 0x09, /* https:// in 0.2 */
+    TINC_ERR_LOCKED             = 0x0A, /* Wi-Fi profiles locked on the ESP */
     /* request (REQ_STATUS.err, or BODY_READ error reply in ERROR state) */
     TINC_ERR_WIFI_DOWN          = 0x20,
     TINC_ERR_DNS                = 0x21,
@@ -105,7 +106,7 @@ enum {
 enum {
     TINC_RS_IDLE         = 0,
     TINC_RS_CONNECTING   = 1,
-    TINC_RS_TLS          = 2,   /* defined now, never sent in 0.1 */
+    TINC_RS_TLS          = 2,   /* defined now, never sent in 0.2 */
     TINC_RS_SENDING      = 3,
     TINC_RS_WAIT_HEADERS = 4,
     TINC_RS_BODY         = 5,
@@ -127,13 +128,16 @@ enum {
 #define TINC_PASS_MAX       64u
 #define TINC_SLOT_NONE      0xFFu
 
+/* Per-slot Wi-Fi flags (WIFI_SET, WIFI_LIST) */
+#define TINC_WF_HIDDEN      0x01u /* SSID not broadcast: ESP connects without seeing it in a scan */
+
 /* ---- Payload layouts (byte offsets) ------------------------------------
  * Offsets rather than packed structs: packed is not C99, and unaligned
  * member access is a trap on Xtensa. Read/write with the LE helpers below.
  */
 
 /* HELLO req & resp (same leading layout)
- *   major u8, minor u8, caps u16 (0 in 0.1), max_payload u16
+ *   major u8, minor u8, caps u16 (0 in 0.2), max_payload u16
  *   resp only: free_heap u32 */
 #define TINC_HELLO_MAJOR        0
 #define TINC_HELLO_MINOR        1
@@ -144,22 +148,29 @@ enum {
 #define TINC_HELLO_RESP_LEN     10
 
 /* STATUS req: empty
- * resp: wifi_state u8, slot u8, rssi i8, ip[4], free_heap u32, req_state u8 */
+ * resp: wifi_state u8, slot u8, rssi i8, ip[4], free_heap u32, req_state u8,
+ *   flags u8 */
 #define TINC_STATUS_WIFI_STATE  0
 #define TINC_STATUS_SLOT        1
 #define TINC_STATUS_RSSI        2
 #define TINC_STATUS_IP          3
 #define TINC_STATUS_FREE_HEAP   7
 #define TINC_STATUS_REQ_STATE   11
-#define TINC_STATUS_RESP_LEN    12
+#define TINC_STATUS_FLAGS       12
+#define TINC_STATUS_RESP_LEN    13
+
+/* Wi-Fi lock: set on the ESP only (firmware build flag or physical
+ * switch), never over the wire. While set, WIFI_SET and WIFI_FORGET return
+ * ERR_LOCKED; WIFI_LIST still works. */
+#define TINC_STATUSF_WIFI_LOCKED 0x01u
 
 /* REQ_BEGIN req: method u8, flags u8, timeout_s u8, content_len u32,
  *   url_len u16, hdr_len u16, url[url_len], hdrs[hdr_len]
- *   - method: GET only in 0.1 (else ERR_BAD_ARG)
- *   - content_len: must be 0 in 0.1 (field reserved for POST)
+ *   - method: GET only in 0.2 (else ERR_BAD_ARG)
+ *   - content_len: must be 0 in 0.2 (field reserved for POST)
  *   - timeout_s: per phase (connect / wait-headers / body gap), 0 = default
  *   - hdrs: "Name: value\r\n" pairs; ESP never logs or stores them
- *   - http:// only in 0.1 (https -> ERR_UNSUPPORTED_SCHEME)
+ *   - http:// only in 0.2 (https -> ERR_UNSUPPORTED_SCHEME)
  * resp: empty. Sync errors: BUSY, BAD_ARG, BAD_LEN, UNSUPPORTED_SCHEME,
  *   WIFI_DOWN. On top of DONE/ERROR the old request is released. */
 #define TINC_BEGIN_METHOD       0
@@ -210,20 +221,23 @@ enum {
 #define TINC_READF_EOF          0x01u
 
 /* WIFI_LIST req: empty
- * resp: TINC_WIFI_SLOTS x (ssid_len u8, ssid[ssid_len]); ssid_len 0 = empty.
+ * resp: TINC_WIFI_SLOTS x (ssid_len u8, ssid[ssid_len]); ssid_len 0 = empty,
+ *   then TINC_WIFI_SLOTS x wflags u8 (TINC_WF_*), in slot order.
  * Passwords are write-only: no command ever returns one. */
 
-/* WIFI_SET req: slot u8, ssid_len u8, ssid[], pass_len u8, pass[]
+/* WIFI_SET req: slot u8, ssid_len u8, ssid[], pass_len u8, pass[], wflags u8
+ *   - wflags: TINC_WF_* (HIDDEN)
  * resp: empty. Saves the slot and triggers reconnect. ESP auto-connects to
- * the first reachable slot, 0 -> 2. */
+ * the first reachable slot, 0 -> 2; a hidden slot is tried directly since it
+ * never shows up in a scan. Error: ERR_LOCKED. */
 #define TINC_WSET_SLOT          0
 #define TINC_WSET_SSID_LEN      1
 #define TINC_WSET_SSID          2
 
-/* WIFI_FORGET req: slot u8. resp: empty. */
+/* WIFI_FORGET req: slot u8. resp: empty. Error: ERR_LOCKED. */
 #define TINC_WFORGET_SLOT       0
 
-/* NOTE: admin commands (0x40+) have no wire-level access control in 0.1.
+/* NOTE: admin commands (0x40+) have no wire-level access control in 0.2.
  * Open question — see AGENTS.md. */
 
 /* ---- Little-endian helpers -------------------------------------------- */

@@ -21,7 +21,10 @@ PAYLOAD_LIMIT = 1024
 HELLO, STATUS, REQ_BEGIN, REQ_STATUS, REQ_ABORT, BODY_READ = 0x01, 0x02, 0x10, 0x11, 0x14, 0x21
 WIFI_LIST, WIFI_SET, WIFI_FORGET = 0x40, 0x41, 0x42
 E_UNSUPPORTED, E_NO_HELLO, E_VERSION, E_BAD_OFFSET, E_UNSUPPORTED_SCHEME = 0x01, 0x02, 0x03, 0x07, 0x09
+E_LOCKED = 0x0A
 E_DNS = 0x21
+WF_HIDDEN = 0x01
+STATUSF_WIFI_LOCKED = 0x01
 
 
 def crc(data):
@@ -45,11 +48,14 @@ hdrs = b"Accept: application/json\r\n"
 ctype = b"application/json"
 
 VALID = [
-    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 1, 0, 256))),
-    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHI", 0, 1, 0, 1024, 28000))),
+    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 2, 0, 256))),
+    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHI", 0, 2, 0, 1024, 28000))),
     ("status_req", frame(0, STATUS, 2)),
     ("status_resp", frame(RESP, STATUS, 2,
-                          struct.pack("<BBb4sIB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0))),
+                          struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0, 0))),
+    ("status_resp_locked", frame(RESP, STATUS, 2,
+                                 struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
+                                             STATUSF_WIFI_LOCKED))),
     ("req_begin_req", frame(0, REQ_BEGIN, 3,
                             struct.pack("<BBBIHH", 1, 0x01, 0, 0, len(url), len(hdrs)) + url + hdrs)),
     ("req_begin_resp", frame(RESP, REQ_BEGIN, 3)),
@@ -63,22 +69,24 @@ VALID = [
     ("req_abort_req", frame(0, REQ_ABORT, 8)),
     ("req_abort_resp", frame(RESP, REQ_ABORT, 8)),
     ("wifi_list_req", frame(0, WIFI_LIST, 9)),
-    ("wifi_list_resp", frame(RESP, WIFI_LIST, 9, lp8(b"HomeNet") + lp8(b"") + lp8(b"Phone"))),
-    ("wifi_set_req", frame(0, WIFI_SET, 10, bytes([1]) + lp8(b"Phone") + lp8(b"hunter22"))),
+    ("wifi_list_resp", frame(RESP, WIFI_LIST, 9, lp8(b"HomeNet") + lp8(b"") + lp8(b"Phone")
+                                     + bytes([0, 0, WF_HIDDEN]))),
+    ("wifi_set_req", frame(0, WIFI_SET, 10, bytes([1]) + lp8(b"Phone") + lp8(b"hunter22") + bytes([WF_HIDDEN]))),
     ("wifi_set_resp", frame(RESP, WIFI_SET, 10)),
     ("wifi_forget_req", frame(0, WIFI_FORGET, 11, bytes([1]))),
     ("wifi_forget_resp", frame(RESP, WIFI_FORGET, 11)),
     ("err_no_hello", frame(RESP | ERR, STATUS, 12, bytes([E_NO_HELLO]))),
-    ("err_version", frame(RESP | ERR, HELLO, 13, bytes([E_VERSION, 0, 2]))),
+    ("err_version", frame(RESP | ERR, HELLO, 13, bytes([E_VERSION, 0, 3]))),
     ("err_unsupported", frame(RESP | ERR, 0x13, 14, bytes([E_UNSUPPORTED]))),
     ("err_bad_offset", frame(RESP | ERR, BODY_READ, 15, bytes([E_BAD_OFFSET]))),
     ("err_scheme", frame(RESP | ERR, REQ_BEGIN, 16, bytes([E_UNSUPPORTED_SCHEME]))),
+    ("err_locked", frame(RESP | ERR, WIFI_SET, 16, bytes([E_LOCKED]))),
     ("err_request_dns", frame(RESP | ERR, BODY_READ, 17, bytes([E_DNS]))),
     # forward-compat: reserved flag bit set -> must be accepted, bit ignored
     ("fwd_reserved_flag", frame(RESP | 0x80, REQ_ABORT, 18)),
     # forward-compat: trailing bytes after known fields -> must be accepted
     ("fwd_trailing_bytes", frame(RESP, STATUS, 19,
-                                 struct.pack("<BBb4sIB", 2, 0, -61, bytes(4), 1, 0) + b"\x01\x02")),
+                                 struct.pack("<BBb4sIBB", 2, 0, -61, bytes(4), 1, 0, 0) + b"\x01\x02")),
     ("max_payload", frame(RESP, BODY_READ, 20,
                           struct.pack("<IB", 0, 0) + bytes(i & 0xFF for i in range(PAYLOAD_LIMIT - 5)))),
 ]
