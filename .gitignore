@@ -53,3 +53,9 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Build output
+build/
+
+# Golden frames are source, not build output
+!test_vectors/*.hex
