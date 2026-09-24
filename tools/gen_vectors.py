@@ -22,9 +22,11 @@ HELLO, STATUS, REQ_BEGIN, REQ_STATUS, REQ_ABORT, BODY_READ = 0x01, 0x02, 0x10, 0
 WIFI_GET, WIFI_SET, WIFI_FORGET = 0x40, 0x41, 0x42
 E_UNSUPPORTED, E_NO_HELLO, E_VERSION, E_BAD_OFFSET, E_BAD_ARG, E_UNSUPPORTED_SCHEME = 0x01, 0x02, 0x03, 0x07, 0x08, 0x09
 E_LOCKED = 0x0A
-E_DNS = 0x21
+E_DNS, E_TLS, E_CERT, E_TIME = 0x21, 0x27, 0x28, 0x29
+TLSR_VERSION, TLSR_EXPIRED, TLSR_HOSTNAME = 0x01, 0x10, 0x12
+RS_ERROR = 7
 WF_HIDDEN = 0x01
-STATUSF_WIFI_LOCKED = 0x01
+STATUSF_WIFI_LOCKED, STATUSF_TIME_VALID = 0x01, 0x02
 
 
 def crc(data):
@@ -44,24 +46,31 @@ def lp8(b):
 
 
 url = b"http://example.com/api?q=1"
+url_https = b"https://example.com/api?q=1"
 hdrs = b"Accept: application/json\r\n"
 ctype = b"application/json"
 
 VALID = [
-    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 3, 0, 256))),
-    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHIB", 0, 3, 0, 1024, 28000, 5))),
+    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 4, 0, 256))),
+    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHIB", 0, 4, 0, 1024, 28000, 5))),
     ("status_req", frame(0, STATUS, 2)),
     ("status_resp", frame(RESP, STATUS, 2,
-                          struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0, 0))),
+                          struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
+                                      STATUSF_TIME_VALID))),
     ("status_resp_locked", frame(RESP, STATUS, 2,
                                  struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
                                              STATUSF_WIFI_LOCKED))),
     ("req_begin_req", frame(0, REQ_BEGIN, 3,
                             struct.pack("<BBBIHH", 1, 0x01, 0, 0, len(url), len(hdrs)) + url + hdrs)),
+    ("req_begin_req_https", frame(0, REQ_BEGIN, 3,
+                                  struct.pack("<BBBIHH", 1, 0, 0, 0, len(url_https), 0) + url_https)),
     ("req_begin_resp", frame(RESP, REQ_BEGIN, 3)),
     ("req_status_req", frame(0, REQ_STATUS, 4)),
     ("req_status_resp", frame(RESP, REQ_STATUS, 4,
-                              struct.pack("<BBHI", 5, 0, 200, 0xFFFFFFFF) + lp8(ctype))),
+                              struct.pack("<BBHI", 5, 0, 200, 0xFFFFFFFF) + lp8(ctype) + bytes([0]))),
+    ("req_status_resp_cert", frame(RESP, REQ_STATUS, 4,
+                                   struct.pack("<BBHI", RS_ERROR, E_CERT, 0, 0xFFFFFFFF) + lp8(b"")
+                                   + bytes([TLSR_HOSTNAME]))),
     ("body_read_req", frame(0, BODY_READ, 5, struct.pack("<IHB", 0, 128, 50))),
     ("body_read_resp", frame(RESP, BODY_READ, 5, struct.pack("<IB", 0, 0) + b'{"ok":true,')),
     ("body_read_resp_eof", frame(RESP, BODY_READ, 6, struct.pack("<IB", 11, 0x01) + b'"n":1}')),
@@ -77,12 +86,15 @@ VALID = [
     ("wifi_forget_req", frame(0, WIFI_FORGET, 11, bytes([1]))),
     ("wifi_forget_resp", frame(RESP, WIFI_FORGET, 11)),
     ("err_no_hello", frame(RESP | ERR, STATUS, 12, bytes([E_NO_HELLO]))),
-    ("err_version", frame(RESP | ERR, HELLO, 13, bytes([E_VERSION, 0, 4]))),
+    ("err_version", frame(RESP | ERR, HELLO, 13, bytes([E_VERSION, 0, 5]))),
     ("err_unsupported", frame(RESP | ERR, 0x13, 14, bytes([E_UNSUPPORTED]))),
     ("err_bad_offset", frame(RESP | ERR, BODY_READ, 15, bytes([E_BAD_OFFSET]))),
     ("err_scheme", frame(RESP | ERR, REQ_BEGIN, 16, bytes([E_UNSUPPORTED_SCHEME]))),
     ("err_locked", frame(RESP | ERR, WIFI_SET, 16, bytes([E_LOCKED]))),
-    ("err_request_dns", frame(RESP | ERR, BODY_READ, 17, bytes([E_DNS]))),
+    ("err_request_dns", frame(RESP | ERR, BODY_READ, 17, bytes([E_DNS, 0]))),
+    ("err_request_cert", frame(RESP | ERR, BODY_READ, 17, bytes([E_CERT, TLSR_EXPIRED]))),
+    ("err_request_tls", frame(RESP | ERR, BODY_READ, 17, bytes([E_TLS, TLSR_VERSION]))),
+    ("err_request_time", frame(RESP | ERR, BODY_READ, 17, bytes([E_TIME, 0]))),
     # forward-compat: reserved flag bit set -> must be accepted, bit ignored
     ("fwd_reserved_flag", frame(RESP | 0x80, REQ_ABORT, 18)),
     # forward-compat: trailing bytes after known fields -> must be accepted

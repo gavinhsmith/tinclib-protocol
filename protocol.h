@@ -30,7 +30,7 @@
 /* Pre-1.0: any MINOR bump may break the wire format, so while MAJOR is 0
  * HELLO requires an exact MAJOR.MINOR match (else ERR_VERSION). */
 #define TINC_PROTO_MAJOR 0
-#define TINC_PROTO_MINOR 3
+#define TINC_PROTO_MINOR 4
 
 /* ---- Framing ---------------------------------------------------------- */
 
@@ -40,7 +40,7 @@
 #define TINC_OVERHEAD   (TINC_HDR_LEN + TINC_CRC_LEN)
 
 #define TINC_FLAG_RESP  0x01u
-#define TINC_FLAG_EVENT 0x02u   /* no events defined in 0.3 */
+#define TINC_FLAG_EVENT 0x02u   /* no events defined in 0.4 */
 #define TINC_FLAG_ERR   0x04u
 
 /* Each side advertises its RECEIVE limit in HELLO. Before HELLO completes
@@ -58,6 +58,9 @@
 #define TINC_WAIT_MS_MAX         100u
 #define TINC_TIMEOUT_S_DEFAULT   10u    /* per-phase, when timeout_s == 0 */
 #define TINC_REDIRECT_MAX        5u
+/* The ESP must answer every frame within TINC_REPLY_TIMEOUT_MS in every
+ * request phase. DNS, connect and the TLS handshake run incrementally and
+ * never block the link (so REQ_ABORT always gets through). */
 
 /* ---- Message types ---------------------------------------------------- */
 
@@ -66,7 +69,7 @@ enum {
     TINC_T_STATUS      = 0x02,
     TINC_T_REQ_BEGIN   = 0x10,
     TINC_T_REQ_STATUS  = 0x11,
-    /* 0x13 HDR_GET    reserved, not in 0.3 */
+    /* 0x13 HDR_GET    reserved, not in 0.4 */
     TINC_T_REQ_ABORT   = 0x14,
     /* 0x20 BODY_WRITE reserved (POST, planned) */
     TINC_T_BODY_READ   = 0x21,
@@ -89,16 +92,40 @@ enum {
     TINC_ERR_BAD_STATE          = 0x06,
     TINC_ERR_BAD_OFFSET         = 0x07,
     TINC_ERR_BAD_ARG            = 0x08,
-    TINC_ERR_UNSUPPORTED_SCHEME = 0x09, /* https:// in 0.3 */
+    TINC_ERR_UNSUPPORTED_SCHEME = 0x09, /* not http:// or https:// */
     TINC_ERR_LOCKED             = 0x0A, /* Wi-Fi profiles locked on the ESP */
-    /* request (REQ_STATUS.err, or BODY_READ error reply in ERROR state) */
+    /* 0x0B INSECURE_DISABLED reserved (INSECURE flag, not in 0.4) */
+    /* request (REQ_STATUS.err, or BODY_READ error reply in ERROR state).
+     * Detail: err_detail u8, a TINC_TLSR_* reason for ERR_TLS / ERR_CERT,
+     * 0 for every other error. */
     TINC_ERR_WIFI_DOWN          = 0x20,
     TINC_ERR_DNS                = 0x21,
     TINC_ERR_CONNECT            = 0x22,
     TINC_ERR_TIMEOUT            = 0x23,
     TINC_ERR_HTTP_PROTO         = 0x24,
     TINC_ERR_TOO_MANY_REDIRECTS = 0x25,
-    TINC_ERR_NO_MEM             = 0x26
+    TINC_ERR_NO_MEM             = 0x26,
+    TINC_ERR_TLS                = 0x27, /* handshake failed (not a cert problem) */
+    TINC_ERR_CERT               = 0x28, /* chain, hostname or validity check failed */
+    TINC_ERR_TIME               = 0x29, /* no valid clock within the TLS phase timeout */
+    TINC_ERR_REDIRECT_DOWNGRADE = 0x2A  /* https -> http redirect, not followed */
+};
+
+/* TLS failure reasons (err_detail u8). Protocol-defined, not library codes:
+ * the firmware maps its TLS library's errors onto these. */
+enum {
+    TINC_TLSR_OTHER         = 0x00, /* unknown / unmapped */
+    /* with ERR_TLS */
+    TINC_TLSR_VERSION       = 0x01, /* no common TLS version (ESP8266 tops out at 1.2) */
+    TINC_TLSR_CIPHER        = 0x02, /* no common cipher suite */
+    TINC_TLSR_ALERT         = 0x03, /* server sent a fatal alert */
+    TINC_TLSR_PROTO         = 0x04, /* malformed / unexpected handshake message */
+    /* with ERR_CERT */
+    TINC_TLSR_EXPIRED       = 0x10,
+    TINC_TLSR_NOT_YET_VALID = 0x11,
+    TINC_TLSR_HOSTNAME      = 0x12, /* cert doesn't match the host */
+    TINC_TLSR_UNTRUSTED     = 0x13, /* chain doesn't reach a built-in CA root */
+    TINC_TLSR_BAD_CHAIN     = 0x14  /* bad signature, key usage, malformed cert */
 };
 
 /* ---- Request state (u8) ----------------------------------------------- */
@@ -106,7 +133,7 @@ enum {
 enum {
     TINC_RS_IDLE         = 0,
     TINC_RS_CONNECTING   = 1,
-    TINC_RS_TLS          = 2,   /* defined now, never sent in 0.3 */
+    TINC_RS_TLS          = 2,   /* https: waiting for a valid clock, then handshake */
     TINC_RS_SENDING      = 3,
     TINC_RS_WAIT_HEADERS = 4,
     TINC_RS_BODY         = 5,
@@ -139,7 +166,7 @@ enum {
  */
 
 /* HELLO req & resp (same leading layout)
- *   major u8, minor u8, caps u16 (0 in 0.3), max_payload u16
+ *   major u8, minor u8, caps u16 (0 in 0.4), max_payload u16
  *   resp only: free_heap u32, wifi_slots u8 (1 .. TINC_WIFI_SLOTS_MAX) */
 #define TINC_HELLO_MAJOR        0
 #define TINC_HELLO_MINOR        1
@@ -166,14 +193,23 @@ enum {
  * switch), never over the wire. While set, WIFI_SET and WIFI_FORGET return
  * ERR_LOCKED; WIFI_GET still works. */
 #define TINC_STATUSF_WIFI_LOCKED 0x01u
+/* The ESP clock is set (SNTP), so certificates can be checked. */
+#define TINC_STATUSF_TIME_VALID  0x02u
 
 /* REQ_BEGIN req: method u8, flags u8, timeout_s u8, content_len u32,
  *   url_len u16, hdr_len u16, url[url_len], hdrs[hdr_len]
- *   - method: GET only in 0.3 (else ERR_BAD_ARG)
- *   - content_len: must be 0 in 0.3 (field reserved for POST)
- *   - timeout_s: per phase (connect / wait-headers / body gap), 0 = default
+ *   - method: GET only in 0.4 (else ERR_BAD_ARG)
+ *   - content_len: must be 0 in 0.4 (field reserved for POST)
+ *   - timeout_s: per phase (connect / TLS / wait-headers / body gap), 0 = default
  *   - hdrs: "Name: value\r\n" pairs; ESP never logs or stores them
- *   - http:// only in 0.3 (https -> ERR_UNSUPPORTED_SCHEME)
+ *   - http:// or https:// (anything else -> ERR_UNSUPPORTED_SCHEME)
+ *   - https is always verified against the CA roots built into the
+ *     firmware. The TLS phase first waits for a valid clock (ERR_TIME if
+ *     the phase times out first), then handshakes (ERR_TLS / ERR_CERT).
+ *   - redirects: http -> https is followed; https -> http is not
+ *     (ERR_REDIRECT_DOWNGRADE), so the app's headers never go out in clear
+ *   - a redirect to a different host drops all of the app's hdrs, so auth
+ *     headers only ever reach the host the app named
  * resp: empty. Sync errors: BUSY, BAD_ARG, BAD_LEN, UNSUPPORTED_SCHEME,
  *   WIFI_DOWN. On top of DONE/ERROR the old request is released. */
 #define TINC_BEGIN_METHOD       0
@@ -187,13 +223,16 @@ enum {
 #define TINC_METHOD_GET         1u
 
 #define TINC_REQF_TRANSCODE     0x01u /* ASCII-transcode text/JSON/XML */
+/* 0x02 INSECURE reserved (skip cert checks), not in 0.4 */
 
 #define TINC_LEN_UNKNOWN        0xFFFFFFFFul
 
 /* REQ_STATUS req: empty
  * resp: state u8, err u8, http_status u16, content_len u32,
- *   ctype_len u8, ctype[ctype_len <= 63]
- *   content_len = TINC_LEN_UNKNOWN when unknown or transcoding */
+ *   ctype_len u8, ctype[ctype_len <= 63], err_detail u8
+ *   - content_len = TINC_LEN_UNKNOWN when unknown or transcoding
+ *   - err_detail: TINC_TLSR_* for ERR_TLS / ERR_CERT, else 0. It sits at
+ *     TINC_RSTAT_CTYPE + ctype_len */
 #define TINC_RSTAT_STATE        0
 #define TINC_RSTAT_ERR          1
 #define TINC_RSTAT_HTTP_STATUS  2
@@ -244,7 +283,7 @@ enum {
 /* WIFI_FORGET req: slot u8. resp: empty. Errors: ERR_LOCKED, ERR_BAD_ARG. */
 #define TINC_WFORGET_SLOT       0
 
-/* NOTE: admin commands (0x40+) have no wire-level access control in 0.3.
+/* NOTE: admin commands (0x40+) have no wire-level access control in 0.4.
  * Open question — see AGENTS.md. */
 
 /* ---- Little-endian helpers -------------------------------------------- */

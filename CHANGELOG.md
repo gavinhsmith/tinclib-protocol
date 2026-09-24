@@ -3,6 +3,32 @@
 Every wire-visible change bumps `TINC_PROTO_MAJOR` or `TINC_PROTO_MINOR` in
 `protocol.h`, and is tagged `vMAJOR.MINOR.0`.
 
+## v0.4.0
+
+HTTPS. Not compatible with 0.3.
+
+- `REQ_BEGIN` accepts `https://`. Certificates are always verified against
+  CA roots built into the firmware, and a reflash updates them.
+  `ERR_UNSUPPORTED_SCHEME` now means "neither http nor https".
+- The `TLS` request state is now used. It waits for a valid clock (SNTP),
+  then does the handshake, and the per-phase timeout covers both steps.
+- New request errors: `ERR_TLS` (0x27, handshake), `ERR_CERT` (0x28, chain,
+  hostname or validity), `ERR_TIME` (0x29, no clock before the TLS phase
+  timed out), `ERR_REDIRECT_DOWNGRADE` (0x2A).
+- TLS failures carry a protocol-defined reason `err_detail u8`
+  (`TINC_TLSR_*`), both in the `BODY_READ` error reply's detail and
+  appended to the `REQ_STATUS` reply after `ctype`. It is 0 for other errors.
+- The ESP must answer every frame within `TINC_REPLY_TIMEOUT_MS` in every
+  request phase. The TLS handshake has to run incrementally, not block.
+- Redirects: http→https is followed. https→http is not, so the app's
+  headers are never resent in clear. A redirect to a different host drops
+  all of the app's headers, so auth headers only reach the host the app
+  named.
+- `STATUS.flags` gets `TINC_STATUSF_TIME_VALID` (0x02).
+- Reserved for later: request flag `INSECURE` (0x02) and
+  `ERR_INSECURE_DISABLED` (0x0B). Deferred until the admin access-control
+  question is settled, along with CA bundle update over the wire.
+
 ## v0.3.0
 
 The number of Wi-Fi slots is now defined by the firmware. Not compatible

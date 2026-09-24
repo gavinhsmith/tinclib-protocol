@@ -19,14 +19,17 @@ platform code to compile, it belongs in the consuming repo, not here.
 
 ## Current status
 
-- **Version 0.3.0 is a draft.** `v0.1.0` and `v0.2.0` are tagged, and `v0.3.0` gets tagged
+- **Version 0.4.0 is a draft.** `v0.1.0` through `v0.3.0` are tagged, and `v0.4.0` gets tagged
   when the user asks. The spec will keep changing on the way to 1.0.
-- **0.3 scope:** plain-HTTP GET, plus the minimum Wi-Fi setup
+- **0.4 scope:** HTTP and HTTPS GET (verified only, CA roots baked into
+  the firmware), plus the minimum Wi-Fi setup
   (`WIFI_GET` / `WIFI_SET` / `WIFI_FORGET`) with a firmware-defined number
   of slots, hidden networks, and an
   ESP-side lock on the Wi-Fi profiles.
 - **Deferred:**
-  - HTTPS / TLS / the `INSECURE` flag / CA bundle update
+  - the `INSECURE` flag and its global toggle (blocked on the admin
+    access-control question)
+  - CA bundle update over the wire
   - POST (`BODY_WRITE`)
   - `HDR_GET`
   - Wi-Fi scan
@@ -202,15 +205,22 @@ These rules exist for reasons discussed at length during design; do not
 9. **CE-silence watchdog on the ESP.** If the ESP hears nothing for ~30s
    with a request active, it frees that request's resources. This is a
    safety net for a CE that crashed or was unplugged mid-request.
+10. **The ESP never blocks the link.** It answers every frame within
+    `TINC_REPLY_TIMEOUT_MS` in every request phase. DNS, connect and
+    especially the TLS handshake (1–3 s of CPU on an ESP8266) run
+    incrementally, e.g. by pumping BearSSL's `br_ssl_engine` between
+    frames, not via a blocking `WiFiClientSecure::connect()`. This is
+    the firmware's job; the protocol does not grant a stall allowance,
+    because a stall would also block `REQ_ABORT` (rule 5).
 
-## Message types (0.3 — see protocol.h for layouts)
+## Message types (0.4 — see protocol.h for layouts)
 
 | Type | Name | Notes |
 |---|---|---|
 | `0x01` | `HELLO` | major, minor, caps (0), max_payload; the reply adds free_heap and wifi_slots (the firmware's slot count, 1..254). Always executed, never replayed |
-| `0x02` | `STATUS` | wifi_state, slot, rssi, ip, free_heap, req_state, flags (`0x01 WIFI_LOCKED`). time_valid and insecure_enabled get appended when HTTPS lands |
-| `0x10` | `REQ_BEGIN` | method, flags, timeout_s, content_len, url_len, hdr_len, url, headers. **0.3: GET and `http://` only.** content_len must be 0 (reserved for POST). Flag `0x01 TRANSCODE` |
-| `0x11` | `REQ_STATUS` | state, err, http_status, content_len, ctype — folds in what would've been REQ_INFO |
+| `0x02` | `STATUS` | wifi_state, slot, rssi, ip, free_heap, req_state, flags (`0x01 WIFI_LOCKED`, `0x02 TIME_VALID`). insecure_enabled comes with the `INSECURE` flag |
+| `0x10` | `REQ_BEGIN` | method, flags, timeout_s, content_len, url_len, hdr_len, url, headers. **0.4: GET only, `http://` or `https://`.** content_len must be 0 (reserved for POST). Flag `0x01 TRANSCODE`; `0x02 INSECURE` reserved |
+| `0x11` | `REQ_STATUS` | state, err, http_status, content_len, ctype, err_detail — folds in what would've been REQ_INFO |
 | `0x13` | `HDR_GET` | **reserved, not implemented** — needed for reading `Location` on 3xx |
 | `0x14` | `REQ_ABORT` | works in any state, including idle; frees resources immediately |
 | `0x20` | `BODY_WRITE` | **reserved, planned (POST)**. Offset-based, credit/window flow control from the ESP |
@@ -219,7 +229,7 @@ These rules exist for reasons discussed at length during design; do not
 | `0x41` | `WIFI_SET` | slot, ssid, password (write-only), wflags (`0x01 HIDDEN`). Saves the slot and triggers a reconnect. `ERR_LOCKED` while locked |
 | `0x42` | `WIFI_FORGET` | slot. `ERR_LOCKED` while locked |
 | `0x43+` | admin | scan, insecure-mode toggle and CA bundle update will come later. **Admin commands are not access-controlled on the wire**; see Open Questions |
-| `0x80` | `BOOT` event | **reserved, not in 0.3.** Optional hint, not authoritative; the CE must still poll |
+| `0x80` | `BOOT` event | **reserved, not in 0.4.** Optional hint, not authoritative; the CE must still poll |
 
 The ESP auto-connects to the first reachable Wi-Fi slot, trying 0 → wifi_slots−1. A
 hidden slot never appears in a scan, so the ESP tries it directly.
@@ -235,7 +245,8 @@ software-only gate, which Open Questions rules out without discussion.
 newer ESP never sends a state an older CE doesn't know:
 `IDLE 0`, `CONNECTING 1`, `TLS 2`, `SENDING 3`, `WAIT_HEADERS 4`, `BODY 5`,
 `DONE 6`, `ERROR 7`.
-- `TLS` is never sent in 0.3.
+- `TLS` covers waiting for a valid clock (SNTP) and then the handshake.
+  If there is still no clock when the phase times out, the error is `ERR_TIME`.
 - `DONE` means EOF has been delivered to the CE.
 - `ERROR` can happen at any point, and carries an error code.
 - `REQ_BEGIN` on top of an active request returns `ERR_BUSY`. On top of a
@@ -247,9 +258,30 @@ newer ESP never sends a state an older CE doesn't know:
 
 ## Design constraints baked into this protocol
 
-- **Scope is HTTP/HTTPS in v1; 0.3 is plain-HTTP GET only.**
-  - `https://` returns `ERR_UNSUPPORTED_SCHEME`. So does a GET redirected
-    to https, which is common: many sites redirect http→https.
+- **Scope is HTTP/HTTPS in v1; 0.4 is GET only.**
+  - Any scheme other than `http://`/`https://` returns `ERR_UNSUPPORTED_SCHEME`.
+  - https is always verified against CA roots built into the firmware.
+    Failures are `ERR_TLS` (handshake) or `ERR_CERT` (chain/hostname/validity).
+  - An http→https redirect is followed. An https→http redirect is not
+    (`ERR_REDIRECT_DOWNGRADE`): following it would resend the app's
+    headers, API keys included, in clear.
+  - A redirect to a different host drops **all** of the app's headers.
+    Without `HDR_GET` the app can't see `Location` before the ESP follows
+    it, so the ESP must not forward credentials to a host the app never
+    named. It drops all of them, not only the auth-looking ones: custom
+    auth header names can't be listed reliably. An API that needs headers
+    on a sibling host can get a `KEEP_HEADERS` flag, or can follow the
+    redirect itself once `HDR_GET` exists.
+  - TLS failures carry a reason, `err_detail u8` (`TINC_TLSR_*`: expired,
+    hostname, untrusted, version, …). It goes in the `BODY_READ` error
+    reply's detail and at the end of `REQ_STATUS`. The codes are defined by the
+    protocol, not by BearSSL or mbedTLS, and firmware maps its library's errors onto them.
+  - **TLS 1.2 is the ceiling on the ESP8266** (BearSSL has no 1.3). A
+    1.3-only server fails with `ERR_TLS` / `TINC_TLSR_VERSION`. That is
+    expected, not a firmware bug.
+  - **RAM:** BearSSL needs ~16 KB of receive buffer unless the server
+    supports max-fragment-length negotiation (most don't). On a low-heap
+    ESP, HTTPS fails with `ERR_NO_MEM`; no special wire handling.
   - No raw TCP sockets are exposed to apps.
   - No Bluetooth. That's v2, and the ESP8266 doesn't have it anyway.
     BLE-only or BT-Classic capability depends on the chip, and must go
@@ -266,11 +298,12 @@ newer ESP never sends a state an older CE doesn't know:
   only. API keys/auth headers are the app's
   responsibility, sent per-request in the headers field; the firmware must
   never persist or log request headers.
-- **Insecure TLS mode is double-gated** (from when HTTPS lands). A request's
+- **Insecure TLS mode is double-gated** (when the `INSECURE` flag lands;
+  it is reserved, not in 0.4). A request's
   `INSECURE` flag only works if TINCLIBC's global "allow insecure" setting
   is also on (`ERR_INSECURE_DISABLED` otherwise). No per-request-only bypass
   exists.
-- **ASCII transcoding is in 0.3**, controlled by the `TRANSCODE` request
+- **ASCII transcoding is in 0.4**, controlled by the `TRANSCODE` request
   flag.
   - It converts curly quotes, em-dashes, accented chars and the like to
     calculator-safe ASCII.
@@ -295,7 +328,7 @@ newer ESP never sends a state an older CE doesn't know:
   Wi-Fi lock (added in 0.2) is consistent with this: it is set physically or at build
   time and only reported on the wire. It covers Wi-Fi profiles only, not
   admin commands in general.
-- **Baud negotiation is deferred.** 0.3 runs at a fixed 115200, and `HELLO`
+- **Baud negotiation is deferred.** 0.4 runs at a fixed 115200, and `HELLO`
   has no baud field yet; it will be appended. Don't wire up a runtime
   baud-switch without confirming the CE-side driver situation (see tinclib's
   AGENTS.md — the `srldrvce` chip-support situation directly affects this).
