@@ -30,7 +30,7 @@
 /* Pre-1.0: any MINOR bump may break the wire format, so while MAJOR is 0
  * HELLO requires an exact MAJOR.MINOR match (else ERR_VERSION). */
 #define TINC_PROTO_MAJOR 0
-#define TINC_PROTO_MINOR 4
+#define TINC_PROTO_MINOR 5
 
 /* ---- Framing ---------------------------------------------------------- */
 
@@ -40,7 +40,7 @@
 #define TINC_OVERHEAD   (TINC_HDR_LEN + TINC_CRC_LEN)
 
 #define TINC_FLAG_RESP  0x01u
-#define TINC_FLAG_EVENT 0x02u   /* no events defined in 0.4 */
+#define TINC_FLAG_EVENT 0x02u   /* no events defined yet */
 #define TINC_FLAG_ERR   0x04u
 
 /* Each side advertises its RECEIVE limit in HELLO. Before HELLO completes
@@ -69,9 +69,9 @@ enum {
     TINC_T_STATUS      = 0x02,
     TINC_T_REQ_BEGIN   = 0x10,
     TINC_T_REQ_STATUS  = 0x11,
-    /* 0x13 HDR_GET    reserved, not in 0.4 */
+    TINC_T_HDR_GET     = 0x13,
     TINC_T_REQ_ABORT   = 0x14,
-    /* 0x20 BODY_WRITE reserved (POST, planned) */
+    TINC_T_BODY_WRITE  = 0x20,
     TINC_T_BODY_READ   = 0x21,
     TINC_T_WIFI_GET    = 0x40,
     TINC_T_WIFI_SET    = 0x41,
@@ -94,7 +94,7 @@ enum {
     TINC_ERR_BAD_ARG            = 0x08,
     TINC_ERR_UNSUPPORTED_SCHEME = 0x09, /* not http:// or https:// */
     TINC_ERR_LOCKED             = 0x0A, /* Wi-Fi profiles locked on the ESP */
-    /* 0x0B INSECURE_DISABLED reserved (INSECURE flag, not in 0.4) */
+    /* 0x0B INSECURE_DISABLED reserved (INSECURE flag, not yet) */
     /* request (REQ_STATUS.err, or BODY_READ error reply in ERROR state).
      * Detail: err_detail u8, a TINC_TLSR_* reason for ERR_TLS / ERR_CERT,
      * 0 for every other error. */
@@ -134,7 +134,7 @@ enum {
     TINC_RS_IDLE         = 0,
     TINC_RS_CONNECTING   = 1,
     TINC_RS_TLS          = 2,   /* https: waiting for a valid clock, then handshake */
-    TINC_RS_SENDING      = 3,
+    TINC_RS_SENDING      = 3,   /* request sent, taking the body via BODY_WRITE */
     TINC_RS_WAIT_HEADERS = 4,
     TINC_RS_BODY         = 5,
     TINC_RS_DONE         = 6,   /* EOF has been delivered to the CE */
@@ -166,7 +166,7 @@ enum {
  */
 
 /* HELLO req & resp (same leading layout)
- *   major u8, minor u8, caps u16 (0 in 0.4), max_payload u16
+ *   major u8, minor u8, caps u16 (0 so far), max_payload u16
  *   resp only: free_heap u32, wifi_slots u8 (1 .. TINC_WIFI_SLOTS_MAX) */
 #define TINC_HELLO_MAJOR        0
 #define TINC_HELLO_MINOR        1
@@ -198,10 +198,19 @@ enum {
 
 /* REQ_BEGIN req: method u8, flags u8, timeout_s u8, content_len u32,
  *   url_len u16, hdr_len u16, url[url_len], hdrs[hdr_len]
- *   - method: GET only in 0.4 (else ERR_BAD_ARG)
- *   - content_len: must be 0 in 0.4 (field reserved for POST)
- *   - timeout_s: per phase (connect / TLS / wait-headers / body gap), 0 = default
- *   - hdrs: "Name: value\r\n" pairs; ESP never logs or stores them
+ *   - method: TINC_METHOD_* (else ERR_BAD_ARG)
+ *   - content_len: exact request body length, sent via BODY_WRITE. Must be
+ *     0 for GET and HEAD. 0 on POST/PUT/PATCH/DELETE = no body, and the
+ *     request goes straight to WAIT_HEADERS. TINC_LEN_UNKNOWN (a chunked
+ *     upload) -> ERR_BAD_ARG, reserved.
+ *   - timeout_s: per phase (connect / TLS / upload progress / wait-headers /
+ *     body gap), 0 = default
+ *   - hdrs: "Name: value\r\n" pairs; ESP never logs or stores them. The ESP
+ *     generates Host and Content-Length itself: an app header named Host,
+ *     Content-Length, Transfer-Encoding or Expect (case-insensitive) ->
+ *     ERR_BAD_ARG
+ *   - TRANSCODE applies to the response only; the request body is sent
+ *     verbatim
  *   - http:// or https:// (anything else -> ERR_UNSUPPORTED_SCHEME)
  *   - https is always verified against the CA roots built into the
  *     firmware. The TLS phase first waits for a valid clock (ERR_TIME if
@@ -210,6 +219,8 @@ enum {
  *     (ERR_REDIRECT_DOWNGRADE), so the app's headers never go out in clear
  *   - a redirect to a different host drops all of the app's hdrs, so auth
  *     headers only ever reach the host the app named
+ *   - only GET and HEAD follow redirects. For the other methods a 3xx is
+ *     the response: http_status carries it and HDR_GET reads Location
  * resp: empty. Sync errors: BUSY, BAD_ARG, BAD_LEN, UNSUPPORTED_SCHEME,
  *   WIFI_DOWN. On top of DONE/ERROR the old request is released. */
 #define TINC_BEGIN_METHOD       0
@@ -221,16 +232,23 @@ enum {
 #define TINC_BEGIN_URL          11  /* fixed part length */
 
 #define TINC_METHOD_GET         1u
+#define TINC_METHOD_POST        2u
+#define TINC_METHOD_PUT         3u
+#define TINC_METHOD_DELETE      4u
+#define TINC_METHOD_PATCH       5u
+#define TINC_METHOD_HEAD        6u
 
 #define TINC_REQF_TRANSCODE     0x01u /* ASCII-transcode text/JSON/XML */
-/* 0x02 INSECURE reserved (skip cert checks), not in 0.4 */
+/* 0x02 INSECURE reserved (skip cert checks), not yet */
 
 #define TINC_LEN_UNKNOWN        0xFFFFFFFFul
 
 /* REQ_STATUS req: empty
  * resp: state u8, err u8, http_status u16, content_len u32,
  *   ctype_len u8, ctype[ctype_len <= 63], err_detail u8
- *   - content_len = TINC_LEN_UNKNOWN when unknown or transcoding
+ *   - content_len = TINC_LEN_UNKNOWN when unknown or transcoding. For HEAD
+ *     it is the response's Content-Length (what a GET would return), and
+ *     BODY_READ returns EOF at offset 0
  *   - err_detail: TINC_TLSR_* for ERR_TLS / ERR_CERT, else 0. It sits at
  *     TINC_RSTAT_CTYPE + ctype_len */
 #define TINC_RSTAT_STATE        0
@@ -242,6 +260,64 @@ enum {
 #define TINC_CTYPE_MAX          63u
 
 /* REQ_ABORT req/resp: empty. Always succeeds, even when idle. */
+
+/* HDR_GET req: index u8, offset u16, name_len u8, name[name_len]
+ * resp: flags u8, total_len u16, data[LEN - 3]
+ *   - reads one response header value. name is matched case-insensitively;
+ *     index picks the nth occurrence (0-based) of a repeated header
+ *   - offset pages through a value longer than one frame: data is
+ *     value[offset ..], clamped to peer max_payload - TINC_HGET_DATA.
+ *     total_len is the whole value's length. offset > total_len ->
+ *     ERR_BAD_OFFSET
+ *   - not found: FOUND clear, total_len 0, no data
+ *   - valid in BODY/DONE, and reads the final response (after any followed
+ *     redirects). ERROR -> error reply carrying the request's err; other
+ *     states -> ERR_BAD_STATE. name_len 0 -> ERR_BAD_ARG
+ *   - the ESP keeps response headers up to a firmware-defined size. If they
+ *     overflowed it, every reply sets TRUNC and a miss may be a false
+ *     negative. Location is always kept in full. */
+#define TINC_HGET_INDEX         0   /* req */
+#define TINC_HGET_OFFSET        1   /* req */
+#define TINC_HGET_NAME_LEN      3   /* req */
+#define TINC_HGET_NAME          4   /* req */
+#define TINC_HGET_FLAGS         0   /* resp */
+#define TINC_HGET_TOTAL_LEN     1   /* resp */
+#define TINC_HGET_DATA          3   /* resp */
+
+#define TINC_HGETF_FOUND        0x01u
+#define TINC_HGETF_TRUNC        0x02u /* header store overflowed */
+
+/* BODY_WRITE req: offset u32, wait_ms u8, data[LEN - 5]
+ * resp: next_offset u32, flags u8
+ *   - uploads the request body. next_offset is how many body bytes the ESP
+ *     has taken so far. Each write takes 0..len bytes of data (whatever
+ *     fits in the ESP's send buffer); taken bytes are committed and never
+ *     resent. The CE resends from next_offset.
+ *   - offset != next_offset -> ERR_BAD_OFFSET, detail: expected u32
+ *   - offset + len > content_len -> ERR_BAD_ARG
+ *   - valid in CONNECTING/TLS/SENDING. Before SENDING nothing is taken, so
+ *     the write loop doubles as the connect poll. ERROR -> error reply
+ *     carrying the request's err. WAIT_HEADERS/BODY/DONE -> RESPONDED if
+ *     that flag applies (below), else ERR_BAD_STATE. IDLE -> ERR_BAD_STATE
+ *   - once next_offset == content_len the request moves to WAIT_HEADERS
+ *   - RESPONDED: the server answered before the upload finished (e.g. 401,
+ *     413). The ESP stops sending and moves on to the response; every later
+ *     BODY_WRITE gets RESPONDED with next_offset unchanged. Not an error:
+ *     read the response as usual.
+ *   - wait_ms clamped to TINC_WAIT_MS_MAX: hold for send-buffer room; ends
+ *     early if any frame arrives
+ *   - data is at most ESP max_payload - TINC_WRITE_DATA
+ *   - SENDING phase timeout = no upload progress for timeout_s
+ *   - after ERR_NO_HELLO the CE never resends a request other than
+ *     GET/HEAD: the server may already have acted on it */
+#define TINC_WRITE_OFFSET       0   /* req */
+#define TINC_WRITE_WAIT_MS      4   /* req */
+#define TINC_WRITE_DATA         5   /* req */
+#define TINC_WRITE_NEXT_OFFSET  0   /* resp */
+#define TINC_WRITE_FLAGS        4   /* resp */
+#define TINC_WRITE_RESP_LEN     5
+
+#define TINC_WRITEF_RESPONDED   0x01u
 
 /* BODY_READ req: offset u32, max_len u16, wait_ms u8
  *   - valid in BODY/DONE; ERROR -> error reply carrying the request's err;
@@ -283,7 +359,7 @@ enum {
 /* WIFI_FORGET req: slot u8. resp: empty. Errors: ERR_LOCKED, ERR_BAD_ARG. */
 #define TINC_WFORGET_SLOT       0
 
-/* NOTE: admin commands (0x40+) have no wire-level access control in 0.4.
+/* NOTE: admin commands (0x40+) have no wire-level access control yet.
  * Open question — see AGENTS.md. */
 
 /* ---- Little-endian helpers -------------------------------------------- */

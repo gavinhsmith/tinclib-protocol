@@ -3,6 +3,37 @@
 Every wire-visible change bumps `TINC_PROTO_MAJOR` or `TINC_PROTO_MINOR` in
 `protocol.h`, and is tagged `vMAJOR.MINOR.0`.
 
+## v0.5.0
+
+Request bodies, more methods and response headers. Not compatible with 0.4.
+
+- `REQ_BEGIN` accepts methods POST (2), PUT (3), DELETE (4), PATCH (5) and
+  HEAD (6), as well as GET.
+  - `content_len` is the exact request body length. It must be 0 for GET
+    and HEAD. `TINC_LEN_UNKNOWN` (a chunked upload) is `ERR_BAD_ARG`, and is
+    reserved.
+  - The ESP generates `Host` and `Content-Length`. An app header named
+    `Host`, `Content-Length`, `Transfer-Encoding` or `Expect` is
+    `ERR_BAD_ARG`.
+  - Only GET and HEAD follow redirects. For other methods the 3xx is the
+    response.
+  - For HEAD, `REQ_STATUS.content_len` is the response's Content-Length and
+    `BODY_READ` returns EOF at offset 0.
+- `BODY_WRITE` (0x20) uploads the body: `offset u32, wait_ms u8, data` →
+  `next_offset u32, flags u8`.
+  - The ESP takes as much as fits in its send buffer, possibly nothing. The
+    CE continues from `next_offset`.
+  - A wrong offset is `ERR_BAD_OFFSET` with detail `expected u32`.
+  - It is valid from `CONNECTING` on, so the write loop is also the connect
+    poll. The request moves to `WAIT_HEADERS` when the body is complete.
+  - Flag `RESPONDED` (0x01): the server answered before the upload finished.
+- `HDR_GET` (0x13) reads a response header: `index u8, offset u16,
+  name_len u8, name` → `flags u8, total_len u16, data`.
+  - Flags: `FOUND` (0x01), and `TRUNC` (0x02) when the ESP's header store
+    overflowed. Location is always kept in full.
+  - It pages through long values with `offset`. Valid in `BODY`/`DONE`.
+- After a reset, the CE never resends a request other than GET/HEAD.
+
 ## v0.4.0
 
 HTTPS. Not compatible with 0.3.

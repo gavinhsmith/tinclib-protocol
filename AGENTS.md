@@ -19,10 +19,12 @@ platform code to compile, it belongs in the consuming repo, not here.
 
 ## Current status
 
-- **Version 0.4.0 is current.** `v0.1.0` through `v0.4.0` are tagged. The next
-  version gets tagged when the user asks. The spec will keep changing on the way to 1.0.
-- **0.4 scope:** HTTP and HTTPS GET (verified only, CA roots baked into
-  the firmware), plus the minimum Wi-Fi setup
+- **Version 0.5.0 is current.** `v0.1.0` through `v0.5.0`
+  are tagged. The next version gets tagged when the user asks. The spec will
+  keep changing on the way to 1.0.
+- **0.5 scope:** HTTP and HTTPS (verified only, CA roots baked into the
+  firmware) with GET, HEAD, POST, PUT, PATCH and DELETE, request bodies via
+  `BODY_WRITE`, response headers via `HDR_GET`, plus the minimum Wi-Fi setup
   (`WIFI_GET` / `WIFI_SET` / `WIFI_FORGET`) with a firmware-defined number
   of slots, hidden networks, and an
   ESP-side lock on the Wi-Fi profiles.
@@ -30,8 +32,7 @@ platform code to compile, it belongs in the consuming repo, not here.
   - the `INSECURE` flag and its global toggle (blocked on the admin
     access-control question)
   - CA bundle update over the wire
-  - POST (`BODY_WRITE`)
-  - `HDR_GET`
+  - chunked request bodies (`content_len` = `TINC_LEN_UNKNOWN`)
   - Wi-Fi scan
   - `BOOT` event
   - baud switching
@@ -196,7 +197,8 @@ These rules exist for reasons discussed at length during design; do not
    - The CE side must treat it as "ESP reset, re-handshake automatically".
    - It surfaces `TINC_ERR_ESP_RESET` to the app for any request that was
      in flight. That is a tinclib API code, not a wire code.
-   - A POST must never be silently resent after a reset.
+   - A request other than GET/HEAD must never be silently resent after a
+     reset: the server may already have acted on it.
 8. **Per-phase timeouts, not one total timeout**, for request state
    (connect / TLS / wait-headers / inter-byte-gap on body). `REQ_BEGIN`'s
    `timeout_s` applies per phase, and 0 means the 10s default. A
@@ -213,23 +215,23 @@ These rules exist for reasons discussed at length during design; do not
     the firmware's job; the protocol does not grant a stall allowance,
     because a stall would also block `REQ_ABORT` (rule 5).
 
-## Message types (0.4 — see protocol.h for layouts)
+## Message types (0.5 — see protocol.h for layouts)
 
 | Type | Name | Notes |
 |---|---|---|
 | `0x01` | `HELLO` | major, minor, caps (0), max_payload; the reply adds free_heap and wifi_slots (the firmware's slot count, 1..254). Always executed, never replayed |
 | `0x02` | `STATUS` | wifi_state, slot, rssi, ip, free_heap, req_state, flags (`0x01 WIFI_LOCKED`, `0x02 TIME_VALID`). insecure_enabled comes with the `INSECURE` flag |
-| `0x10` | `REQ_BEGIN` | method, flags, timeout_s, content_len, url_len, hdr_len, url, headers. **0.4: GET only, `http://` or `https://`.** content_len must be 0 (reserved for POST). Flag `0x01 TRANSCODE`; `0x02 INSECURE` reserved |
+| `0x10` | `REQ_BEGIN` | method (GET 1, POST 2, PUT 3, DELETE 4, PATCH 5, HEAD 6), flags, timeout_s, content_len, url_len, hdr_len, url, headers. `http://` or `https://`. content_len is the exact body length, 0 for GET/HEAD. App headers `Host`/`Content-Length`/`Transfer-Encoding`/`Expect` → `ERR_BAD_ARG`. Flag `0x01 TRANSCODE` (response only); `0x02 INSECURE` reserved |
 | `0x11` | `REQ_STATUS` | state, err, http_status, content_len, ctype, err_detail — folds in what would've been REQ_INFO |
-| `0x13` | `HDR_GET` | **reserved, not implemented** — needed for reading `Location` on 3xx |
+| `0x13` | `HDR_GET` | index, offset, name → flags (`0x01 FOUND`, `0x02 TRUNC`), total_len, data. One response header value, paged by offset; nth occurrence by index. Valid in `BODY`/`DONE`. Location is always kept |
 | `0x14` | `REQ_ABORT` | works in any state, including idle; frees resources immediately |
-| `0x20` | `BODY_WRITE` | **reserved, planned (POST)**. Offset-based, credit/window flow control from the ESP |
+| `0x20` | `BODY_WRITE` | offset, wait_ms, data → next_offset, flags (`0x01 RESPONDED`). The ESP takes what fits; the CE continues from next_offset. Valid in `CONNECTING`/`TLS`/`SENDING` |
 | `0x21` | `BODY_READ` | offset, max_len, wait_ms → offset, flags (`0x01 EOF`), data |
 | `0x40` | `WIFI_GET` | slot → ssid, wflags for that one slot. One slot per frame, so it always fits in the 64-byte minimum payload. Never passwords. Works while locked. `ERR_BAD_ARG` if slot ≥ wifi_slots |
 | `0x41` | `WIFI_SET` | slot, ssid, password (write-only), wflags (`0x01 HIDDEN`). Saves the slot and triggers a reconnect. `ERR_LOCKED` while locked |
 | `0x42` | `WIFI_FORGET` | slot. `ERR_LOCKED` while locked |
 | `0x43+` | admin | scan, insecure-mode toggle and CA bundle update will come later. **Admin commands are not access-controlled on the wire**; see Open Questions |
-| `0x80` | `BOOT` event | **reserved, not in 0.4.** Optional hint, not authoritative; the CE must still poll |
+| `0x80` | `BOOT` event | **reserved, not in 0.5.** Optional hint, not authoritative; the CE must still poll |
 
 The ESP auto-connects to the first reachable Wi-Fi slot, trying 0 → wifi_slots−1. A
 hidden slot never appears in a scan, so the ESP tries it directly.
@@ -247,6 +249,10 @@ newer ESP never sends a state an older CE doesn't know:
 `DONE 6`, `ERROR 7`.
 - `TLS` covers waiting for a valid clock (SNTP) and then the handshake.
   If there is still no clock when the phase times out, the error is `ERR_TIME`.
+- `SENDING` takes the request body via `BODY_WRITE`. When next_offset
+  reaches content_len (or at once, if content_len is 0) it moves to
+  `WAIT_HEADERS`. If the server answers early, it moves on to the response
+  and `BODY_WRITE` replies carry `RESPONDED`.
 - `DONE` means EOF has been delivered to the CE.
 - `ERROR` can happen at any point, and carries an error code.
 - `REQ_BEGIN` on top of an active request returns `ERR_BUSY`. On top of a
@@ -254,11 +260,12 @@ newer ESP never sends a state an older CE doesn't know:
 - `DONE` stays readable for ~2s, so a retried final `BODY_READ` still works.
 - `BODY_READ` is valid only in `BODY`/`DONE`. In `ERROR` it gets an error
   reply carrying the request's err; in any other state, `ERR_BAD_STATE`.
-- GET follows up to 5 redirects.
+- GET and HEAD follow up to 5 redirects. Other methods don't: the 3xx is
+  the response, and `HDR_GET` reads `Location`.
 
 ## Design constraints baked into this protocol
 
-- **Scope is HTTP/HTTPS in v1; 0.4 is GET only.**
+- **Scope is HTTP/HTTPS in v1.**
   - Any scheme other than `http://`/`https://` returns `ERR_UNSUPPORTED_SCHEME`.
   - https is always verified against CA roots built into the firmware.
     Failures are `ERR_TLS` (handshake) or `ERR_CERT` (chain/hostname/validity).
@@ -287,7 +294,7 @@ newer ESP never sends a state an older CE doesn't know:
     BLE-only or BT-Classic capability depends on the chip, and must go
     through `HELLO` caps bits when it arrives.
 - **The ESP owns all HTTP semantics**: DNS, TCP, TLS, redirects (GET/HEAD
-  only — POST/PUT/DELETE return the 3xx directly, since following a 307/308
+  only — POST/PUT/PATCH/DELETE return the 3xx directly, since following a 307/308
   would require buffering the whole request body in ESP RAM), chunked
   transfer decoding, gzip (ESP requests uncompressed content). The CE only
   ever sees plain decoded bytes.
@@ -299,11 +306,11 @@ newer ESP never sends a state an older CE doesn't know:
   responsibility, sent per-request in the headers field; the firmware must
   never persist or log request headers.
 - **Insecure TLS mode is double-gated** (when the `INSECURE` flag lands;
-  it is reserved, not in 0.4). A request's
+  it is reserved, not in 0.5). A request's
   `INSECURE` flag only works if TINCLIBC's global "allow insecure" setting
   is also on (`ERR_INSECURE_DISABLED` otherwise). No per-request-only bypass
   exists.
-- **ASCII transcoding is in 0.4**, controlled by the `TRANSCODE` request
+- **ASCII transcoding has been in since 0.1**, controlled by the `TRANSCODE` request
   flag.
   - It converts curly quotes, em-dashes, accented chars and the like to
     calculator-safe ASCII.
@@ -314,11 +321,10 @@ newer ESP never sends a state an older CE doesn't know:
 
 ## Open questions / known gaps (flag, don't silently resolve)
 
-- **`HDR_GET` (0x13) is reserved but unimplemented.** Needed the moment any
-  app needs to read `Location` after a POST redirect. If you're asked to
-  implement redirect-following behavior for non-GET methods, implementing
-  this message is the correct fix — do not add a workaround that fakes it
-  through another message type.
+- **Non-GET redirects are the app's job.** Since 0.5 the app reads
+  `Location` with `HDR_GET` and issues the follow-up request itself. Don't
+  add ESP-side redirect following for non-GET methods: following a 307/308
+  means buffering the whole body in ESP RAM.
 - **Admin commands (0x40+) have no wire-level access control.** Any program
   that opens the serial link could send them. A physical-button confirmation
   scheme (require a press on the ESP within ~10s window for sensitive admin
@@ -328,7 +334,7 @@ newer ESP never sends a state an older CE doesn't know:
   Wi-Fi lock (added in 0.2) is consistent with this: it is set physically or at build
   time and only reported on the wire. It covers Wi-Fi profiles only, not
   admin commands in general.
-- **Baud negotiation is deferred.** 0.4 runs at a fixed 115200, and `HELLO`
+- **Baud negotiation is deferred.** 0.5 runs at a fixed 115200, and `HELLO`
   has no baud field yet; it will be appended. Don't wire up a runtime
   baud-switch without confirming the CE-side driver situation (see tinclib's
   AGENTS.md — the `srldrvce` chip-support situation directly affects this).
