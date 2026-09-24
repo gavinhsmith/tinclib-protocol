@@ -19,8 +19,8 @@ platform code to compile, it belongs in the consuming repo, not here.
 
 ## Current status
 
-- **Version 0.4.0 is a draft.** `v0.1.0` through `v0.3.0` are tagged, and `v0.4.0` gets tagged
-  when the user asks. The spec will keep changing on the way to 1.0.
+- **Version 0.4.0 is current.** `v0.1.0` through `v0.4.0` are tagged. The next
+  version gets tagged when the user asks. The spec will keep changing on the way to 1.0.
 - **0.4 scope:** HTTP and HTTPS GET (verified only, CA roots baked into
   the firmware), plus the minimum Wi-Fi setup
   (`WIFI_GET` / `WIFI_SET` / `WIFI_FORGET`) with a firmware-defined number
