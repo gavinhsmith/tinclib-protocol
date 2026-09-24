@@ -103,7 +103,9 @@ without printing anything.
 
 ## Versioning rules (important — do not skip)
 
-- Tag releases as `vMAJOR.MINOR` (e.g. `v1.2`). The tag must match
+- Tag releases as `vMAJOR.MINOR` (e.g. `v1.2`). `v0.1.0`–`v0.4.0` also
+  exist as aliases of `v0.1`–`v0.4` for older pins; keep them, and don't add
+  `.0` tags for newer versions. The tag must match
   `TINC_PROTO_MAJOR`/`TINC_PROTO_MINOR` in `protocol.h` exactly. Every
   wire-visible change bumps one of them, and is recorded in `CHANGELOG.md`.
 - Every consuming repo pins this repo to a specific tag. **Don't tag unless
