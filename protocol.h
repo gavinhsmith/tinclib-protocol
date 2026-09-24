@@ -67,6 +67,7 @@
 enum {
     TINC_T_HELLO       = 0x01,
     TINC_T_STATUS      = 0x02,
+    TINC_T_INFO        = 0x03,
     TINC_T_REQ_BEGIN   = 0x10,
     TINC_T_REQ_STATUS  = 0x11,
     TINC_T_HDR_GET     = 0x13,
@@ -188,6 +189,16 @@ enum {
 #define TINC_STATUS_REQ_STATE   11
 #define TINC_STATUS_FLAGS       12
 #define TINC_STATUS_RESP_LEN    13
+
+/* INFO req: empty
+ * resp: fw_len u8, fw[fw_len], board_len u8, board[board_len]
+ *   - display only: free-form printable ASCII, each at most TINC_INFO_STR_MAX
+ *     bytes, so the reply always fits in TINC_PAYLOAD_MIN. e.g. fw "1.2.0",
+ *     board "Wemos D1 mini"
+ *   - never use it to judge compatibility: that is HELLO's job */
+#define TINC_INFO_FW_LEN        0
+#define TINC_INFO_FW            1   /* board_len follows fw */
+#define TINC_INFO_STR_MAX       24u
 
 /* Wi-Fi lock: set on the ESP only (firmware build flag or physical
  * switch), never over the wire. While set, WIFI_SET and WIFI_FORGET return

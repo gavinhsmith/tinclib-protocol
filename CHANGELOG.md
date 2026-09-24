@@ -33,6 +33,9 @@ Request bodies, more methods and response headers. Not compatible with 0.4.
     overflowed. Location is always kept in full.
   - It pages through long values with `offset`. Valid in `BODY`/`DONE`.
 - After a reset, the CE never resends a request other than GET/HEAD.
+- `INFO` (0x03) returns the firmware version and board name as
+  display-only strings: `fw_len u8, fw, board_len u8, board`, each at most
+  24 bytes. It is not a compatibility check; `HELLO` still is.
 
 ## v0.4.0
 

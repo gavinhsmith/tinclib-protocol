@@ -221,6 +221,7 @@ These rules exist for reasons discussed at length during design; do not
 |---|---|---|
 | `0x01` | `HELLO` | major, minor, caps (0), max_payload; the reply adds free_heap and wifi_slots (the firmware's slot count, 1..254). Always executed, never replayed |
 | `0x02` | `STATUS` | wifi_state, slot, rssi, ip, free_heap, req_state, flags (`0x01 WIFI_LOCKED`, `0x02 TIME_VALID`). insecure_enabled comes with the `INSECURE` flag |
+| `0x03` | `INFO` | → fw, board: length-prefixed ASCII, each ≤ 24 bytes. Display only; never a compatibility check (that's `HELLO`) |
 | `0x10` | `REQ_BEGIN` | method (GET 1, POST 2, PUT 3, DELETE 4, PATCH 5, HEAD 6), flags, timeout_s, content_len, url_len, hdr_len, url, headers. `http://` or `https://`. content_len is the exact body length, 0 for GET/HEAD. App headers `Host`/`Content-Length`/`Transfer-Encoding`/`Expect` → `ERR_BAD_ARG`. Flag `0x01 TRANSCODE` (response only); `0x02 INSECURE` reserved |
 | `0x11` | `REQ_STATUS` | state, err, http_status, content_len, ctype, err_detail — folds in what would've been REQ_INFO |
 | `0x13` | `HDR_GET` | index, offset, name → flags (`0x01 FOUND`, `0x02 TRUNC`), total_len, data. One response header value, paged by offset; nth occurrence by index. Valid in `BODY`/`DONE`. Location is always kept |

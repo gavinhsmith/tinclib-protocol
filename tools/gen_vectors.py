@@ -19,7 +19,7 @@ RESP, EVENT, ERR = 0x01, 0x02, 0x04
 PAYLOAD_LIMIT = 1024
 
 HELLO, STATUS, REQ_BEGIN, REQ_STATUS, REQ_ABORT, BODY_READ = 0x01, 0x02, 0x10, 0x11, 0x14, 0x21
-HDR_GET, BODY_WRITE = 0x13, 0x20
+HDR_GET, BODY_WRITE, INFO = 0x13, 0x20, 0x03
 WIFI_GET, WIFI_SET, WIFI_FORGET = 0x40, 0x41, 0x42
 E_UNSUPPORTED, E_NO_HELLO, E_VERSION, E_BAD_OFFSET, E_BAD_ARG, E_UNSUPPORTED_SCHEME = 0x01, 0x02, 0x03, 0x07, 0x08, 0x09
 E_LOCKED = 0x0A
@@ -63,6 +63,8 @@ VALID = [
     ("status_resp", frame(RESP, STATUS, 2,
                           struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
                                       STATUSF_TIME_VALID))),
+    ("info_req", frame(0, INFO, 2)),
+    ("info_resp", frame(RESP, INFO, 2, lp8(b"1.2.0") + lp8(b"Wemos D1 mini"))),
     ("status_resp_locked", frame(RESP, STATUS, 2,
                                  struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
                                              STATUSF_WIFI_LOCKED))),

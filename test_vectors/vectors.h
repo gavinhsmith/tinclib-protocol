@@ -24,6 +24,15 @@ static const uint8_t tv_status_resp[] = {
     0x00, 0x00, 0x02, 0x11, 0x05
 };
 
+static const uint8_t tv_info_req[] = {
+    0xA5, 0x00, 0x03, 0x02, 0x00, 0x00, 0xB0, 0xE4
+};
+
+static const uint8_t tv_info_resp[] = {
+    0xA5, 0x01, 0x03, 0x02, 0x14, 0x00, 0x05, 0x31, 0x2E, 0x32, 0x2E, 0x30, 0x0D, 0x57, 0x65, 0x6D,
+    0x6F, 0x73, 0x20, 0x44, 0x31, 0x20, 0x6D, 0x69, 0x6E, 0x69, 0x8B, 0xD9
+};
+
 static const uint8_t tv_status_resp_locked[] = {
     0xA5, 0x01, 0x02, 0x02, 0x0D, 0x00, 0x02, 0x00, 0xC3, 0xC0, 0xA8, 0x01, 0x2A, 0x6C, 0x6B, 0x00,
     0x00, 0x00, 0x01, 0x72, 0x35
@@ -337,6 +346,8 @@ static const tinc_vector tinc_valid_vectors[] = {
     {"hello_resp", tv_hello_resp, sizeof tv_hello_resp},
     {"status_req", tv_status_req, sizeof tv_status_req},
     {"status_resp", tv_status_resp, sizeof tv_status_resp},
+    {"info_req", tv_info_req, sizeof tv_info_req},
+    {"info_resp", tv_info_resp, sizeof tv_info_resp},
     {"status_resp_locked", tv_status_resp_locked, sizeof tv_status_resp_locked},
     {"req_begin_req", tv_req_begin_req, sizeof tv_req_begin_req},
     {"req_begin_req_https", tv_req_begin_req_https, sizeof tv_req_begin_req_https},
@@ -389,7 +400,7 @@ static const tinc_vector tinc_valid_vectors[] = {
     {"fwd_trailing_bytes", tv_fwd_trailing_bytes, sizeof tv_fwd_trailing_bytes},
     {"max_payload", tv_max_payload, sizeof tv_max_payload},
 };
-#define TINC_VALID_COUNT 55
+#define TINC_VALID_COUNT 57
 
 static const tinc_vector tinc_invalid_vectors[] = {
     {"bad_crc", tv_bad_crc, sizeof tv_bad_crc},
