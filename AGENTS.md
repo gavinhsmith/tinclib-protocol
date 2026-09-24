@@ -19,7 +19,7 @@ platform code to compile, it belongs in the consuming repo, not here.
 
 ## Current status
 
-- **Version 0.5.0 is current.** `v0.1.0` through `v0.5.0`
+- **Version 0.5 is current.** `v0.1` through `v0.5`
   are tagged. The next version gets tagged when the user asks. The spec will
   keep changing on the way to 1.0.
 - **0.5 scope:** HTTP and HTTPS (verified only, CA roots baked into the
@@ -36,9 +36,9 @@ platform code to compile, it belongs in the consuming repo, not here.
   - Wi-Fi scan
   - `BOOT` event
   - baud switching
-- In this file, "v1" means the first design generation, which is what 1.0.0
+- In this file, "v1" means the first design generation, which is what 1.0
   will freeze. It is not a version number. Concrete versions are written
-  as `0.1`, `1.0.0` and so on.
+  as `0.1`, `1.0` and so on.
 
 ## Contents
 
@@ -103,7 +103,7 @@ without printing anything.
 
 ## Versioning rules (important — do not skip)
 
-- Tag releases as `vMAJOR.MINOR.0` (e.g. `v1.2.0`). The tag must match
+- Tag releases as `vMAJOR.MINOR` (e.g. `v1.2`). The tag must match
   `TINC_PROTO_MAJOR`/`TINC_PROTO_MINOR` in `protocol.h` exactly. Every
   wire-visible change bumps one of them, and is recorded in `CHANGELOG.md`.
 - Every consuming repo pins this repo to a specific tag. **Don't tag unless
@@ -114,7 +114,7 @@ without printing anything.
     too.
   - The golden vectors carry the current version, so regenerate them on
     every bump.
-- **From `1.0.0`**, which freezes the frame format and the existing layouts:
+- **From `1.0`**, which freezes the frame format and the existing layouts:
   - **MAJOR** bumps on any breaking change: new required field, changed
     field meaning, removed message type, changed frame layout.
   - **MINOR** bumps on additive, backward-compatible change: new optional

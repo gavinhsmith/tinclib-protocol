@@ -1,9 +1,9 @@
 # Changelog
 
 Every wire-visible change bumps `TINC_PROTO_MAJOR` or `TINC_PROTO_MINOR` in
-`protocol.h`, and is tagged `vMAJOR.MINOR.0`.
+`protocol.h`, and is tagged `vMAJOR.MINOR`.
 
-## v0.5.0
+## v0.5
 
 Request bodies, more methods and response headers. Not compatible with 0.4.
 
@@ -37,7 +37,7 @@ Request bodies, more methods and response headers. Not compatible with 0.4.
   display-only strings: `fw_len u8, fw, board_len u8, board`, each at most
   24 bytes. It is not a compatibility check; `HELLO` still is.
 
-## v0.4.0
+## v0.4
 
 HTTPS. Not compatible with 0.3.
 
@@ -63,7 +63,7 @@ HTTPS. Not compatible with 0.3.
   `ERR_INSECURE_DISABLED` (0x0B). Deferred until the admin access-control
   question is settled, along with CA bundle update over the wire.
 
-## v0.3.0
+## v0.3
 
 The number of Wi-Fi slots is now defined by the firmware. Not compatible
 with 0.2.
@@ -76,7 +76,7 @@ with 0.2.
   always fits.
 - `TINC_WIFI_SLOTS` is replaced by `TINC_WIFI_SLOTS_MAX` (254).
 
-## v0.2.0
+## v0.2
 
 Wi-Fi additions. Not compatible with 0.1: HELLO rejects a 0.1 peer with
 `ERR_VERSION`.
@@ -91,7 +91,7 @@ Wi-Fi additions. Not compatible with 0.1: HELLO rejects a 0.1 peer with
   - While locked, `WIFI_SET` and `WIFI_FORGET` return the new
     `ERR_LOCKED` (0x0A). `WIFI_LIST` still works.
 
-## v0.1.0
+## v0.1
 
 First draft. Pre-1.0, so any minor bump may break the wire format
 (HELLO requires an exact version match). It supports plain-HTTP GET and
