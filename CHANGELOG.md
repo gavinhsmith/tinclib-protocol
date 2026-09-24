@@ -3,6 +3,21 @@
 Every wire-visible change bumps `TINC_PROTO_MAJOR` or `TINC_PROTO_MINOR` in
 `protocol.h`, and is tagged `vMAJOR.MINOR`.
 
+## v0.6
+
+A longer reply timeout while a request is in TLS. Not compatible with 0.5.
+
+- New `TINC_REPLY_TIMEOUT_TLS_MS` (1000). One crypto step of the TLS
+  handshake can't be split and can take several hundred ms on an ESP8266,
+  which cut close to the 3 × 200 ms retry budget. While a request is in
+  `TLS`, the ESP must answer within this timeout instead of
+  `TINC_REPLY_TIMEOUT_MS`. It still pumps the handshake between steps.
+- For an https request the CE uses the longer timeout for every frame from
+  `REQ_BEGIN` until a reply shows the request is past `TLS`. http requests
+  never use it.
+- The ESP's serial RX buffer must hold a full frame, so a frame that
+  arrives during a stall isn't lost.
+
 ## v0.5
 
 Request bodies, more methods and response headers. Not compatible with 0.4.

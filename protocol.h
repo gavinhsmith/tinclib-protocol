@@ -30,7 +30,7 @@
 /* Pre-1.0: any MINOR bump may break the wire format, so while MAJOR is 0
  * HELLO requires an exact MAJOR.MINOR match (else ERR_VERSION). */
 #define TINC_PROTO_MAJOR 0
-#define TINC_PROTO_MINOR 5
+#define TINC_PROTO_MINOR 6
 
 /* ---- Framing ---------------------------------------------------------- */
 
@@ -50,7 +50,8 @@
 
 /* Recommended timing (CE driver / ESP firmware). */
 #define TINC_BAUD_DEFAULT        115200ul
-#define TINC_REPLY_TIMEOUT_MS    200u   /* plus wait_ms for BODY_READ */
+#define TINC_REPLY_TIMEOUT_MS    200u   /* plus wait_ms for BODY_READ/BODY_WRITE */
+#define TINC_REPLY_TIMEOUT_TLS_MS 1000u /* instead, while a request may be in TLS */
 #define TINC_RETRY_MAX           3u
 #define TINC_INTERBYTE_RESET_MS  50u    /* call tinc_parser_reset after this gap */
 #define TINC_WATCHDOG_MS         30000ul /* ESP frees active request after CE silence */
@@ -59,8 +60,24 @@
 #define TINC_TIMEOUT_S_DEFAULT   10u    /* per-phase, when timeout_s == 0 */
 #define TINC_REDIRECT_MAX        5u
 /* The ESP must answer every frame within TINC_REPLY_TIMEOUT_MS in every
- * request phase. DNS, connect and the TLS handshake run incrementally and
- * never block the link (so REQ_ABORT always gets through). */
+ * request phase except TLS. DNS, connect and the TLS handshake run
+ * incrementally and never block the link (so REQ_ABORT always gets through).
+ *
+ * TLS exception: one crypto step of the handshake (an EC or RSA operation)
+ * can't be split and can take several hundred ms on an ESP8266. While the
+ * request is in TLS the ESP must answer within TINC_REPLY_TIMEOUT_TLS_MS,
+ * and still pumps the handshake between steps, never through it in one go.
+ * A REQ_ABORT sent then may wait out the current step.
+ *
+ * The CE can't see the CONNECTING -> TLS transition, so for an https
+ * request it uses TINC_REPLY_TIMEOUT_TLS_MS for every frame (any type) from
+ * REQ_BEGIN until a reply shows the request is past TLS: REQ_STATUS state
+ * >= SENDING, a BODY_WRITE that took bytes, or a BODY_READ or HDR_GET
+ * success. http requests never use it.
+ *
+ * The ESP's serial RX buffer must hold a full frame
+ * (TINC_FRAME_BUF(max_payload)), so a frame that arrives during a stall
+ * isn't lost. */
 
 /* ---- Message types ---------------------------------------------------- */
 

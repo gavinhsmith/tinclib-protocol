@@ -57,8 +57,8 @@ post_hdrs = b"Content-Type: application/json\r\n"
 post_body = b'{"name":"calc","n":84}'
 
 VALID = [
-    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 5, 0, 256))),
-    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHIB", 0, 5, 0, 1024, 28000, 5))),
+    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 6, 0, 256))),
+    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHIB", 0, 6, 0, 1024, 28000, 5))),
     ("status_req", frame(0, STATUS, 2)),
     ("status_resp", frame(RESP, STATUS, 2,
                           struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
@@ -116,7 +116,7 @@ VALID = [
     ("wifi_forget_req", frame(0, WIFI_FORGET, 11, bytes([1]))),
     ("wifi_forget_resp", frame(RESP, WIFI_FORGET, 11)),
     ("err_no_hello", frame(RESP | ERR, STATUS, 12, bytes([E_NO_HELLO]))),
-    ("err_version", frame(RESP | ERR, HELLO, 13, bytes([E_VERSION, 0, 6]))),
+    ("err_version", frame(RESP | ERR, HELLO, 13, bytes([E_VERSION, 0, 7]))),
     ("err_unsupported", frame(RESP | ERR, 0x12, 14, bytes([E_UNSUPPORTED]))),
     ("err_bad_offset", frame(RESP | ERR, BODY_READ, 15, bytes([E_BAD_OFFSET]))),
     ("err_scheme", frame(RESP | ERR, REQ_BEGIN, 16, bytes([E_UNSUPPORTED_SCHEME]))),

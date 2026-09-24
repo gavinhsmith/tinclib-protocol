@@ -19,7 +19,7 @@ platform code to compile, it belongs in the consuming repo, not here.
 
 ## Current status
 
-- **Version 0.5 is current.** `v0.1` through `v0.5`
+- **Version 0.6 is current.** `v0.1` through `v0.6`
   are tagged. The next version gets tagged when the user asks. The spec will
   keep changing on the way to 1.0.
 - **0.5 scope:** HTTP and HTTPS (verified only, CA roots baked into the
@@ -214,10 +214,18 @@ These rules exist for reasons discussed at length during design; do not
     especially the TLS handshake (1–3 s of CPU on an ESP8266) run
     incrementally, e.g. by pumping BearSSL's `br_ssl_engine` between
     frames, not via a blocking `WiFiClientSecure::connect()`. This is
-    the firmware's job; the protocol does not grant a stall allowance,
-    because a stall would also block `REQ_ABORT` (rule 5).
+    the firmware's job.
+    - **The only stall allowance is `TLS`** (added in 0.6, from testing):
+      one EC/RSA step can't be split, so in `TLS` the ESP must answer within
+      `TINC_REPLY_TIMEOUT_TLS_MS` (1000 ms) instead. It covers one crypto
+      step, not the whole handshake. A `REQ_ABORT` may wait out that step.
+    - The CE can't see the move into `TLS`, so for an https request it uses
+      the longer timeout from `REQ_BEGIN` until a reply shows the request
+      is past `TLS`.
+    - Don't widen this allowance to other phases: every stall also delays
+      `REQ_ABORT` (rule 5).
 
-## Message types (0.5 — see protocol.h for layouts)
+## Message types (0.6 — see protocol.h for layouts)
 
 | Type | Name | Notes |
 |---|---|---|
