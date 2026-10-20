@@ -19,7 +19,7 @@ platform code to compile, it belongs in the consuming repo, not here.
 
 ## Current status
 
-- **Version 0.6 is current.** `v0.1` through `v0.6`
+- **Version 0.7 is current.** `v0.1` through `v0.6`
   are tagged. The next version gets tagged when the user asks. The spec will
   keep changing on the way to 1.0.
 - **0.5 scope:** HTTP and HTTPS (verified only, CA roots baked into the
@@ -225,13 +225,13 @@ These rules exist for reasons discussed at length during design; do not
     - Don't widen this allowance to other phases: every stall also delays
       `REQ_ABORT` (rule 5).
 
-## Message types (0.6 — see protocol.h for layouts)
+## Message types (0.7 — see protocol.h for layouts)
 
 | Type | Name | Notes |
 |---|---|---|
 | `0x01` | `HELLO` | major, minor, caps (0), max_payload; the reply adds free_heap and wifi_slots (the firmware's slot count, 1..254). Always executed, never replayed |
 | `0x02` | `STATUS` | wifi_state, slot, rssi, ip, free_heap, req_state, flags (`0x01 WIFI_LOCKED`, `0x02 TIME_VALID`). insecure_enabled comes with the `INSECURE` flag |
-| `0x03` | `INFO` | → fw, board: length-prefixed ASCII, each ≤ 24 bytes. Display only; never a compatibility check (that's `HELLO`) |
+| `0x03` | `INFO` | → fw, board: length-prefixed ASCII, each ≤ 24 bytes; then mac[6], the station MAC (added in 0.7). Display only; never a compatibility check (that's `HELLO`) |
 | `0x10` | `REQ_BEGIN` | method (GET 1, POST 2, PUT 3, DELETE 4, PATCH 5, HEAD 6), flags, timeout_s, content_len, url_len, hdr_len, url, headers. `http://` or `https://`. content_len is the exact body length, 0 for GET/HEAD. App headers `Host`/`Content-Length`/`Transfer-Encoding`/`Expect` → `ERR_BAD_ARG`. Flag `0x01 TRANSCODE` (response only); `0x02 INSECURE` reserved |
 | `0x11` | `REQ_STATUS` | state, err, http_status, content_len, ctype, err_detail — folds in what would've been REQ_INFO |
 | `0x13` | `HDR_GET` | index, offset, name → flags (`0x01 FOUND`, `0x02 TRUNC`), total_len, data. One response header value, paged by offset; nth occurrence by index. Valid in `BODY`/`DONE`. Location is always kept |
@@ -239,7 +239,7 @@ These rules exist for reasons discussed at length during design; do not
 | `0x20` | `BODY_WRITE` | offset, wait_ms, data → next_offset, flags (`0x01 RESPONDED`). The ESP takes what fits; the CE continues from next_offset. Valid in `CONNECTING`/`TLS`/`SENDING` |
 | `0x21` | `BODY_READ` | offset, max_len, wait_ms → offset, flags (`0x01 EOF`), data |
 | `0x40` | `WIFI_GET` | slot → ssid, wflags for that one slot. One slot per frame, so it always fits in the 64-byte minimum payload. Never passwords. Works while locked. `ERR_BAD_ARG` if slot ≥ wifi_slots |
-| `0x41` | `WIFI_SET` | slot, ssid, password (write-only), wflags (`0x01 HIDDEN`). Saves the slot and triggers a reconnect. `ERR_LOCKED` while locked |
+| `0x41` | `WIFI_SET` | slot, ssid, password (write-only; empty = open network, else 8..64 bytes), wflags (`0x01 HIDDEN`). Saves the slot and triggers a reconnect. `ERR_LOCKED` while locked |
 | `0x42` | `WIFI_FORGET` | slot. `ERR_LOCKED` while locked |
 | `0x43+` | admin | scan, insecure-mode toggle and CA bundle update will come later. **Admin commands are not access-controlled on the wire**; see Open Questions |
 | `0x80` | `BOOT` event | **reserved, not in 0.5.** Optional hint, not authoritative; the CE must still poll |

@@ -67,7 +67,7 @@ wrong. See [`protocol.h`](protocol.h) for every layout and rule, and
 
 ## Versions
 
-The current version is **0.6**, tagged `v0.6`. Every wire-visible change bumps
+The current version is **0.7**, tagged `v0.7`. Every wire-visible change bumps
 the version and gets a `vMAJOR.MINOR` tag. Before 1.0 any minor version may
 break the wire format, so `HELLO` requires an exact match.
 
@@ -81,7 +81,7 @@ in place. Don't copy the files.
 
 ```sh
 git submodule add https://github.com/gavinhsmith/tinclib-protocol external/tinclib-protocol
-git -C external/tinclib-protocol checkout v0.6
+git -C external/tinclib-protocol checkout v0.7
 ```
 
 | File | What |

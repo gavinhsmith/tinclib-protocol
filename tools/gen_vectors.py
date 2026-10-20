@@ -57,14 +57,15 @@ post_hdrs = b"Content-Type: application/json\r\n"
 post_body = b'{"name":"calc","n":84}'
 
 VALID = [
-    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 6, 0, 256))),
-    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHIB", 0, 6, 0, 1024, 28000, 5))),
+    ("hello_req", frame(0, HELLO, 1, struct.pack("<BBHH", 0, 7, 0, 256))),
+    ("hello_resp", frame(RESP, HELLO, 1, struct.pack("<BBHHIB", 0, 7, 0, 1024, 28000, 5))),
     ("status_req", frame(0, STATUS, 2)),
     ("status_resp", frame(RESP, STATUS, 2,
                           struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
                                       STATUSF_TIME_VALID))),
     ("info_req", frame(0, INFO, 2)),
-    ("info_resp", frame(RESP, INFO, 2, lp8(b"1.2.0") + lp8(b"Wemos D1 mini"))),
+    ("info_resp", frame(RESP, INFO, 2, lp8(b"1.2.0") + lp8(b"Wemos D1 mini")
+                                    + bytes([0x5C, 0xCF, 0x7F, 0x12, 0x34, 0x56]))),
     ("status_resp_locked", frame(RESP, STATUS, 2,
                                  struct.pack("<BBb4sIBB", 2, 0, -61, bytes([192, 168, 1, 42]), 27500, 0,
                                              STATUSF_WIFI_LOCKED))),
@@ -112,6 +113,7 @@ VALID = [
     ("wifi_get_resp_empty", frame(RESP, WIFI_GET, 9, lp8(b"") + bytes([0]))),
     ("err_bad_slot", frame(RESP | ERR, WIFI_GET, 9, bytes([E_BAD_ARG]))),
     ("wifi_set_req", frame(0, WIFI_SET, 10, bytes([1]) + lp8(b"Phone") + lp8(b"hunter22") + bytes([WF_HIDDEN]))),
+    ("wifi_set_open_req", frame(0, WIFI_SET, 10, bytes([2]) + lp8(b"CoffeeShop") + lp8(b"") + bytes([0]))),
     ("wifi_set_resp", frame(RESP, WIFI_SET, 10)),
     ("wifi_forget_req", frame(0, WIFI_FORGET, 11, bytes([1]))),
     ("wifi_forget_resp", frame(RESP, WIFI_FORGET, 11)),

@@ -30,7 +30,7 @@
 /* Pre-1.0: any MINOR bump may break the wire format, so while MAJOR is 0
  * HELLO requires an exact MAJOR.MINOR match (else ERR_VERSION). */
 #define TINC_PROTO_MAJOR 0
-#define TINC_PROTO_MINOR 6
+#define TINC_PROTO_MINOR 7
 
 /* ---- Framing ---------------------------------------------------------- */
 
@@ -208,14 +208,19 @@ enum {
 #define TINC_STATUS_RESP_LEN    13
 
 /* INFO req: empty
- * resp: fw_len u8, fw[fw_len], board_len u8, board[board_len]
- *   - display only: free-form printable ASCII, each at most TINC_INFO_STR_MAX
+ * resp: fw_len u8, fw[fw_len], board_len u8, board[board_len], mac[6]
+ *   - mac: the ESP's Wi-Fi station MAC (the one an AP sees), in transmission
+ *     order, e.g. 5C:CF:7F:12:34:56 is bytes 5C CF 7F 12 34 56. Lets the user
+ *     register the board on a MAC-filtered network. Find it at
+ *     TINC_INFO_FW + fw_len + 1 + board_len.
+ *   - fw/board are display only: free-form printable ASCII, each at most TINC_INFO_STR_MAX
  *     bytes, so the reply always fits in TINC_PAYLOAD_MIN. e.g. fw "1.2.0",
  *     board "Wemos D1 mini"
  *   - never use it to judge compatibility: that is HELLO's job */
 #define TINC_INFO_FW_LEN        0
 #define TINC_INFO_FW            1   /* board_len follows fw */
 #define TINC_INFO_STR_MAX       24u
+#define TINC_MAC_LEN            6u
 
 /* Wi-Fi lock: set on the ESP only (firmware build flag or physical
  * switch), never over the wire. While set, WIFI_SET and WIFI_FORGET return
@@ -377,6 +382,8 @@ enum {
 
 /* WIFI_SET req: slot u8, ssid_len u8, ssid[], pass_len u8, pass[], wflags u8
  *   - wflags: TINC_WF_* (HIDDEN)
+ *   - pass_len 0 = open network (no encryption). Otherwise 8..TINC_PASS_MAX
+ *     (WPA2-PSK passphrase, or 64 hex digits); anything else -> ERR_BAD_ARG.
  * resp: empty. Saves the slot and triggers reconnect. ESP auto-connects to
  * the first reachable slot, 0 -> wifi_slots-1; a hidden slot is tried directly since it
  * never shows up in a scan. Errors: ERR_LOCKED, ERR_BAD_ARG (slot out of range). */

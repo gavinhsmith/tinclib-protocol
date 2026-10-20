@@ -3,6 +3,17 @@
 Every wire-visible change bumps `TINC_PROTO_MAJOR` or `TINC_PROTO_MINOR` in
 `protocol.h`, and is tagged `vMAJOR.MINOR`.
 
+## v0.7
+
+The board's MAC address, and open networks spelled out. Not compatible with
+0.6.
+
+- `INFO`'s reply gains `mac[6]` after `board`: the ESP's Wi-Fi station MAC,
+  in transmission order (`TINC_MAC_LEN`). For registering the board on a
+  MAC-filtered network.
+- `WIFI_SET`: `pass_len` 0 means an open network. Otherwise the password is
+  8..64 bytes, and any other length is `ERR_BAD_ARG`.
+
 ## v0.6
 
 A longer reply timeout while a request is in TLS. Not compatible with 0.5.
